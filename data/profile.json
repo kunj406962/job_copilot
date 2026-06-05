@@ -1,0 +1,22 @@
+{
+  "name": "Kunj Patel",
+  "email": "pkunjk007@gmail.com",
+  "phone": "(825)-734-6962",
+  "linkedin": "linkedin.com/in/kunj-k-patel",
+  "github": "github.com/kunj406962",
+  "location": "Calgary, AB",
+  "education": [
+    {
+      "degree": "Bachelor of Technology in Software Development",
+      "institution": "Southern Alberta Institute of Technology (SAIT)",
+      "graduation_year": "2028",
+      "gpa": null
+    },
+    {
+      "degree": "Diploma in Software Development",
+      "institution": "Southern Alberta Institute of Technology (SAIT)",
+      "graduation_year": "2026",
+      "gpa": "3.92"
+    }
+  ]
+}

@@ -8,11 +8,16 @@ load_dotenv()
 
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 _status_callback = None
+_cache: dict[str, list[float]] = {}
 
 
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
         raise ValueError("Cannot embed empty text.")
+
+    # Return cached embedding if we already embedded this text
+    if text in _cache:
+        return _cache[text]
 
     for attempt in range(5):
         try:
@@ -20,7 +25,9 @@ def embed(text: str) -> list[float]:
                 model="gemini-embedding-001",
                 contents=text,
             )
-            return response.embeddings[0].values
+            vector = response.embeddings[0].values
+            _cache[text] = vector
+            return vector
         except ClientError as e:
             err = str(e)
             if ("429" in err or "503" in err) and attempt < 4:
@@ -32,3 +39,7 @@ def embed(text: str) -> list[float]:
                 time.sleep(wait)
             else:
                 raise
+
+
+def clear_cache() -> None:
+    _cache.clear()

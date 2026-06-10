@@ -1,155 +1,155 @@
 import uuid
+import json
 import chromadb
 from core.embeddings import embed
-import time
 
 CHROMA_PATH = "./data/chromadb"
-COLLECTION_NAME = "experience"
+COLLECTION_NAME = "experience_v2"
 
-VALID_CATEGORIES = ("project", "skill", "softskill", "job")
+VALID_TYPES = ("project", "job", "softskill")
 
 _client = chromadb.PersistentClient(path=CHROMA_PATH)
 _collection = _client.get_or_create_collection(COLLECTION_NAME)
 
 
-def add_chunk(text: str, category: str) -> None:
-    if category not in VALID_CATEGORIES:
-        raise ValueError(f"Invalid category '{category}'. Must be one of: {', '.join(VALID_CATEGORIES)}")
+def add_entry(
+    entry_type: str,
+    name: str,
+    bullets: list[str],
+    stack: str = "",
+    role: str = "",
+    description: str = "",
+) -> None:
+    if entry_type not in VALID_TYPES:
+        raise ValueError(f"Invalid type '{entry_type}'. Must be one of: {', '.join(VALID_TYPES)}")
 
-    vector = embed(text)
+    if not bullets:
+        raise ValueError("At least one bullet point is required.")
+
+    # Build the document text for embedding
+    # Format: "Name | Stack | Bullet 1. Bullet 2. Bullet 3."
+    parts = [name]
+    if stack:
+        parts.append(stack)
+    parts.append(" ".join(bullets))
+    document_text = " | ".join(parts)
+
+    vector = embed(document_text)
+
     _collection.add(
         ids=[str(uuid.uuid4())],
         embeddings=[vector],
-        documents=[text],
-        metadatas=[{"category": category}],
+        documents=[document_text],
+        metadatas=[{
+            "type": entry_type,
+            "name": name,
+            "stack": stack,
+            "role": role,
+            "description": description,
+            "bullets": json.dumps(bullets),
+        }],
     )
 
 
-def query_chunks(skill_text: str, n_results: int = 5) -> list[dict]:
-    vector = embed(skill_text)
+def query_entries(query_text: str, n_results: int = 10) -> list[dict]:
     count = _collection.count()
-
     if count == 0:
         return []
 
+    vector = embed(query_text)
     capped = int(min(n_results, count))
+
     results = _collection.query(
         query_embeddings=[vector],
         n_results=capped,
         include=["documents", "metadatas", "distances"],
     )
 
-    chunks = []
+    entries = []
     for doc, meta, dist in zip(
         results["documents"][0],
         results["metadatas"][0],
         results["distances"][0],
     ):
-        chunks.append({
-            "text": doc,
-            "category": meta["category"],
-            "distance": dist,
+        entries.append({
+            "type": meta["type"],
+            "name": meta["name"],
+            "stack": meta.get("stack", ""),
+            "role": meta.get("role", ""),
+            "description": meta.get("description", ""),
+            "bullets": json.loads(meta["bullets"]),
+            "distance": round(dist, 4),
+            "document": doc,
         })
 
-    return chunks
+    return entries
 
 
-def query_chunks_by_category(skill_text: str, category: str, n_results: int = 5) -> list[dict]:
-    if category not in VALID_CATEGORIES:
-        raise ValueError(f"Invalid category '{category}'.")
+def hybrid_score(entry: dict, keywords: list[str]) -> float:
+    """0.7 semantic + 0.3 keyword overlap score."""
+    semantic = 1 - (entry["distance"] / 2)
 
-    vector = embed(skill_text)
-    count = _collection.count()
+    stack_and_doc = (entry["stack"] + " " + entry["document"]).lower()
+    matched = sum(1 for kw in keywords if kw.lower() in stack_and_doc)
+    keyword = matched / len(keywords) if keywords else 0
 
-    if count == 0:
-        return []
-
-    capped = int(min(n_results, count))
-    results = _collection.query(
-        query_embeddings=[vector],
-        n_results=capped,
-        where={"category": category},
-        include=["documents", "metadatas", "distances"],
-    )
-
-    chunks = []
-    for doc, meta, dist in zip(
-        results["documents"][0],
-        results["metadatas"][0],
-        results["distances"][0],
-    ):
-        chunks.append({
-            "text": doc,
-            "category": meta["category"],
-            "distance": dist,
-        })
-
-    return chunks
+    return round(0.7 * semantic + 0.3 * keyword, 4)
 
 
-def get_all_chunks() -> list[dict]:
+def get_top_entries(
+    query_text: str,
+    keywords: list[str],
+    top_projects: int = 3,
+    top_jobs: int = 2,
+) -> dict:
+    all_entries = query_entries(query_text, n_results=10)
+
+    # Score all entries
+    for entry in all_entries:
+        entry["score"] = hybrid_score(entry, keywords)
+
+    # Split by type and sort by hybrid score
+    projects = sorted(
+        [e for e in all_entries if e["type"] == "project"],
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:top_projects]
+
+    jobs = sorted(
+        [e for e in all_entries if e["type"] == "job"],
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:top_jobs]
+
+    softskills = [e for e in all_entries if e["type"] == "softskill"]
+
+    return {
+        "projects": projects,
+        "jobs": jobs,
+        "softskills": softskills,
+    }
+
+
+def get_all_entries() -> list[dict]:
     results = _collection.get(include=["documents", "metadatas"])
-    chunks = []
+    entries = []
     for doc, meta in zip(results["documents"], results["metadatas"]):
-        chunks.append({
-            "text": doc,
-            "category": meta["category"],
+        entries.append({
+            "type": meta["type"],
+            "name": meta["name"],
+            "stack": meta.get("stack", ""),
+            "role": meta.get("role", ""),
+            "description": meta.get("description", ""),
+            "bullets": json.loads(meta["bullets"]),
         })
-    return chunks
+    return entries
 
 
-def get_chunks_by_category(category: str) -> list[dict]:
-    if category not in VALID_CATEGORIES:
-        raise ValueError(f"Invalid category '{category}'.")
-
-    results = _collection.get(
-        where={"category": category},
-        include=["documents", "metadatas"],
-    )
-    chunks = []
-    for doc, meta in zip(results["documents"], results["metadatas"]):
-        chunks.append({
-            "text": doc,
-            "category": meta["category"],
-        })
-    return chunks
-
-
-def chunk_count() -> int:
+def entry_count() -> int:
     return _collection.count()
 
-def query_chunks_batch(skills: list[str], n_results: int = 1) -> dict[str, list[dict]]:
-    """
-    Query ChromaDB for multiple skills in a single batch operation.
-    Returns dict mapping skill -> list of chunks.
-    """
-    from core.database import collection
-    
-    results = {}
-    
-    for skill in skills:
-        try:
-            response = collection.query(
-                query_texts=[skill],
-                n_results=n_results,
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            chunks = []
-            if response['documents'] and response['documents'][0]:
-                for i, doc in enumerate(response['documents'][0]):
-                    chunks.append({
-                        "text": doc,
-                        "category": response['metadatas'][0][i].get('category', 'unknown'),
-                        "distance": response['distances'][0][i]
-                    })
-            results[skill] = chunks
-            
-        except Exception as e:
-            print(f"⚠️ ChromaDB query failed for '{skill}': {e}")
-            results[skill] = []
-        
-        # Small delay to avoid hammering ChromaDB
-        time.sleep(0.05)
-    
-    return results
+
+def clear_all() -> None:
+    global _collection
+    _client.delete_collection(COLLECTION_NAME)
+    _collection = _client.get_or_create_collection(COLLECTION_NAME)

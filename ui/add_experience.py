@@ -1,11 +1,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QComboBox, QScrollArea, QFrame,
-    QMessageBox, QStackedWidget
+    QMessageBox
 )
 from PyQt6.QtCore import Qt
-from core.database import add_entry, get_all_entries, entry_count
-
+from core.database import add_entry, delete_entry, update_entry, get_all_entries, entry_count
 
 TYPE_OPTIONS = [
     ("Project", "project"),
@@ -15,7 +14,7 @@ TYPE_OPTIONS = [
 
 
 class BulletEntry(QWidget):
-    def __init__(self, placeholder: str, on_remove):
+    def __init__(self, placeholder: str, on_remove, text: str = ""):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -25,6 +24,8 @@ class BulletEntry(QWidget):
         self.text_input = QTextEdit()
         self.text_input.setFixedHeight(68)
         self.text_input.setPlaceholderText(placeholder)
+        if text:
+            self.text_input.setPlainText(text)
         layout.addWidget(self.text_input, stretch=1)
 
         remove_btn = QPushButton("Remove")
@@ -38,36 +39,63 @@ class BulletEntry(QWidget):
 
 
 class EntryCard(QFrame):
-    def __init__(self, entry: dict):
+    def __init__(self, entry: dict, on_edit, on_delete):
         super().__init__()
+        self.entry = entry
+        self.on_edit = on_edit
+        self.on_delete = on_delete
         self.setObjectName("card")
+        self._build_ui()
+
+    def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
-        # Header row
+        # Header
         header = QHBoxLayout()
-        badge = QLabel(entry["type"].upper())
-        badge.setStyleSheet(self._badge_style(entry["type"]))
+        header.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        badge = QLabel(self.entry["type"].upper())
+        badge.setStyleSheet(self._badge_style(self.entry["type"]))
         header.addWidget(badge)
 
-        name = QLabel(entry["name"])
+        name = QLabel(self.entry["name"])
         name.setStyleSheet("font-weight: 700; font-size: 13px; color: #1A1A2E;")
         header.addWidget(name)
         header.addStretch()
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setObjectName("secondary")
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.clicked.connect(self._on_edit_clicked)
+        header.addWidget(edit_btn)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setObjectName("danger")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.clicked.connect(self._on_delete_clicked)
+        header.addWidget(delete_btn)
+
         layout.addLayout(header)
 
-        if entry.get("stack"):
-            stack = QLabel(entry["stack"])
+        if self.entry.get("stack"):
+            stack = QLabel(self.entry["stack"])
             stack.setStyleSheet("font-size: 11px; color: #6C757D;")
             stack.setWordWrap(True)
             layout.addWidget(stack)
 
-        for bullet in entry["bullets"]:
+        for bullet in self.entry["bullets"]:
             b = QLabel(f"• {bullet}")
             b.setWordWrap(True)
             b.setStyleSheet("font-size: 12px; color: #1A1A2E; padding-left: 4px;")
             layout.addWidget(b)
+
+    def _on_edit_clicked(self):
+        self.on_edit(self.entry)
+
+    def _on_delete_clicked(self):
+        self.on_delete(self.entry["id"], self.entry["name"])
 
     def _badge_style(self, entry_type: str) -> str:
         colors = {
@@ -83,6 +111,7 @@ class AddExperienceScreen(QWidget):
     def __init__(self):
         super().__init__()
         self.bullet_entries = []
+        self._editing_id = None
         self._build_ui()
         self._load_entries()
 
@@ -102,9 +131,9 @@ class AddExperienceScreen(QWidget):
         self.left_layout.setContentsMargins(32, 32, 32, 32)
         self.left_layout.setSpacing(8)
 
-        title = QLabel("Add Experience")
-        title.setObjectName("title")
-        self.left_layout.addWidget(title)
+        self.form_title = QLabel("Add Experience")
+        self.form_title.setObjectName("title")
+        self.left_layout.addWidget(self.form_title)
 
         subtitle = QLabel("Add one entry per project or job with all its bullets.")
         subtitle.setObjectName("subtitle")
@@ -113,7 +142,6 @@ class AddExperienceScreen(QWidget):
 
         self.left_layout.addSpacing(16)
 
-        # Type dropdown
         self.left_layout.addWidget(self._label("Type"))
         self.type_combo = QComboBox()
         for display, _ in TYPE_OPTIONS:
@@ -123,7 +151,6 @@ class AddExperienceScreen(QWidget):
 
         self.left_layout.addSpacing(4)
 
-        # Name field (always shown)
         self.left_layout.addWidget(self._label("Name *"))
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g. YYC Track, Superstore")
@@ -131,7 +158,6 @@ class AddExperienceScreen(QWidget):
 
         self.left_layout.addSpacing(4)
 
-        # Swappable fields — project vs job
         self.stack_label = self._label("Tech Stack")
         self.left_layout.addWidget(self.stack_label)
         self.stack_input = QLineEdit()
@@ -156,7 +182,6 @@ class AddExperienceScreen(QWidget):
 
         self.left_layout.addSpacing(12)
 
-        # Bullets
         self.left_layout.addWidget(self._label("Bullet Points"))
         self.bullets_layout = QVBoxLayout()
         self.bullets_layout.setSpacing(8)
@@ -173,12 +198,23 @@ class AddExperienceScreen(QWidget):
 
         self.left_layout.addSpacing(16)
 
-        save_btn = QPushButton("Save to Profile")
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        save_btn.clicked.connect(self._save)
-        self.left_layout.addWidget(save_btn)
+        btn_row = QHBoxLayout()
 
+        self.save_btn = QPushButton("Save to Profile")
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_btn.clicked.connect(self._save)
+        btn_row.addWidget(self.save_btn)
+
+        self.cancel_btn = QPushButton("Cancel Edit")
+        self.cancel_btn.setObjectName("secondary")
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel_edit)
+        self.cancel_btn.hide()
+        btn_row.addWidget(self.cancel_btn)
+
+        self.left_layout.addLayout(btn_row)
         self.left_layout.addStretch()
+
         left_scroll.setWidget(left)
         outer.addWidget(left_scroll)
 
@@ -221,7 +257,6 @@ class AddExperienceScreen(QWidget):
         right_layout.addWidget(scroll)
         outer.addWidget(right, stretch=1)
 
-        # Set initial field visibility
         self._on_type_change(0)
 
     def _label(self, text: str) -> QLabel:
@@ -231,51 +266,45 @@ class AddExperienceScreen(QWidget):
 
     def _on_type_change(self, index: int):
         _, entry_type = TYPE_OPTIONS[index]
-
         if entry_type == "softskill":
-            self.stack_label.hide()
-            self.stack_input.hide()
-            self.role_label.hide()
-            self.role_input.hide()
-            self.desc_label.hide()
-            self.desc_input.hide()
+            self.stack_label.hide(); self.stack_input.hide()
+            self.role_label.hide(); self.role_input.hide()
+            self.desc_label.hide(); self.desc_input.hide()
         elif entry_type == "job":
             self.stack_label.setText("Tech Stack (optional)")
             self.stack_input.setPlaceholderText("e.g. Python, Excel, Salesforce")
-            self.stack_label.show()
-            self.stack_input.show()
+            self.stack_label.show(); self.stack_input.show()
             self.role_label.setText("Job Title *")
             self.role_input.setPlaceholderText("e.g. Sales Associate, Cashier")
-            self.role_label.show()
-            self.role_input.show()
+            self.role_label.show(); self.role_input.show()
             self.desc_label.setText("Company")
             self.desc_input.setPlaceholderText("e.g. Superstore, Tim Hortons")
-            self.desc_label.show()
-            self.desc_input.show()
-        else:  # project
+            self.desc_label.show(); self.desc_input.show()
+        else:
             self.stack_label.setText("Tech Stack")
             self.stack_input.setPlaceholderText("e.g. React, Node.js, MongoDB, Docker")
-            self.stack_label.show()
-            self.stack_input.show()
+            self.stack_label.show(); self.stack_input.show()
             self.role_label.setText("Role")
             self.role_input.setPlaceholderText("e.g. Team Member, Solo Developer")
-            self.role_label.show()
-            self.role_input.show()
+            self.role_label.show(); self.role_input.show()
             self.desc_label.setText("Description")
             self.desc_input.setPlaceholderText("e.g. Capstone Web Application (Live)")
-            self.desc_label.show()
-            self.desc_input.show()
+            self.desc_label.show(); self.desc_input.show()
 
-    def _add_bullet(self):
+    def _add_bullet(self, text: str = ""):
+        # clicked signal passes a bool — ignore it, only use explicit text arg
+        if isinstance(text, bool):
+            text = ""
         _, entry_type = TYPE_OPTIONS[self.type_combo.currentIndex()]
         hints = {
-            "project": "e.g. Built a full-stack MERN web application...",
-            "job": "e.g. Processed customer transactions and resolved complaints...",
+            "project":   "e.g. Built a full-stack MERN web application...",
+            "job":       "e.g. Processed customer transactions...",
             "softskill": "e.g. Led sprint planning and coordinated 3 developers...",
         }
         entry = BulletEntry(
             placeholder=hints.get(entry_type, "Enter bullet point..."),
             on_remove=lambda: self._remove_bullet(entry),
+            text=text,
         )
         self.bullet_entries.append(entry)
         self.bullets_layout.addWidget(entry)
@@ -287,6 +316,52 @@ class AddExperienceScreen(QWidget):
         self.bullet_entries.remove(entry)
         self.bullets_layout.removeWidget(entry)
         entry.deleteLater()
+
+    def _prefill_form(self, entry: dict):
+        for i, (_, t) in enumerate(TYPE_OPTIONS):
+            if t == entry["type"]:
+                self.type_combo.setCurrentIndex(i)
+                break
+
+        self._on_type_change(self.type_combo.currentIndex())
+
+        self.name_input.setText(entry["name"])
+        self.stack_input.setText(entry.get("stack", ""))
+        self.role_input.setText(entry.get("role", ""))
+        self.desc_input.setText(entry.get("description", ""))
+
+        while self.bullet_entries:
+            e = self.bullet_entries[-1]
+            self.bullet_entries.remove(e)
+            self.bullets_layout.removeWidget(e)
+            e.deleteLater()
+
+        for bullet in entry["bullets"]:
+            self._add_bullet(text=bullet)
+
+        self._editing_id = entry["id"]
+        self.form_title.setText("Edit Experience")
+        self.save_btn.setText("Save Changes")
+        self.cancel_btn.show()
+
+    def _cancel_edit(self):
+        self._editing_id = None
+        self.form_title.setText("Add Experience")
+        self.save_btn.setText("Save to Profile")
+        self.cancel_btn.hide()
+        self._clear_form()
+
+    def _clear_form(self):
+        self.name_input.clear()
+        self.stack_input.clear()
+        self.role_input.clear()
+        self.desc_input.clear()
+        while self.bullet_entries:
+            e = self.bullet_entries[-1]
+            self.bullet_entries.remove(e)
+            self.bullets_layout.removeWidget(e)
+            e.deleteLater()
+        self._add_bullet()
 
     def _save(self):
         _, entry_type = TYPE_OPTIONS[self.type_combo.currentIndex()]
@@ -304,32 +379,45 @@ class AddExperienceScreen(QWidget):
             return
 
         try:
-            add_entry(
-                entry_type=entry_type,
-                name=name,
-                bullets=bullets,
-                stack=stack,
-                role=role,
-                description=desc,
-            )
+            if self._editing_id:
+                update_entry(
+                    entry_id=self._editing_id,
+                    entry_type=entry_type,
+                    name=name,
+                    bullets=bullets,
+                    stack=stack,
+                    role=role,
+                    description=desc,
+                )
+            else:
+                add_entry(
+                    entry_type=entry_type,
+                    name=name,
+                    bullets=bullets,
+                    stack=stack,
+                    role=role,
+                    description=desc,
+                )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
             return
 
-        # Clear form
-        self.name_input.clear()
-        self.stack_input.clear()
-        self.role_input.clear()
-        self.desc_input.clear()
-        for entry in self.bullet_entries:
-            entry.text_input.clear()
-        while len(self.bullet_entries) > 1:
-            entry = self.bullet_entries[-1]
-            self.bullet_entries.remove(entry)
-            self.bullets_layout.removeWidget(entry)
-            entry.deleteLater()
-
+        self._editing_id = None
+        self.form_title.setText("Add Experience")
+        self.save_btn.setText("Save to Profile")
+        self.cancel_btn.hide()
+        self._clear_form()
         self._load_entries()
+
+    def _delete_entry(self, entry_id: str, name: str):
+        reply = QMessageBox.question(
+            self, "Delete Entry",
+            f"Delete '{name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_entry(entry_id)
+            self._load_entries()
 
     def _load_entries(self):
         while self.entries_layout.count() > 1:
@@ -341,5 +429,9 @@ class AddExperienceScreen(QWidget):
         self.count_label.setText(f"{len(entries)} entries")
 
         for entry in reversed(entries):
-            card = EntryCard(entry)
+            card = EntryCard(
+                entry=entry,
+                on_edit=self._prefill_form,
+                on_delete=self._delete_entry,
+            )
             self.entries_layout.insertWidget(0, card)

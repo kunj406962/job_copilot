@@ -1,63 +1,45 @@
 # Job Application Copilot — Project Context
 
 ## What This Project Is
-A desktop application (.exe) that uses RAG (Retrieval Augmented Generation) and a vector database to help users tailor resumes and cover letters to specific job descriptions. It analyzes the user's stored experience against a job description, generates a match score, identifies skill gaps with confidence percentages, and outputs a tailored resume and cover letter as editable Word documents (.docx).
-
-The long term vision is a Phase 2 web app with full job application tracking (applied, interviewed, rejected, offered) and analytics.
+A desktop application (.exe) that uses RAG (Retrieval Augmented Generation) and a local vector database to help users tailor resumes and cover letters to specific job descriptions. Stores experience as project-level documents, retrieves the most relevant ones using hybrid semantic + keyword scoring, and generates tailored Word documents via Gemini.
 
 ---
 
-## Who This Is For
-- The developer (Windows, WSL for development)
-- Eventually: multiplatform (Mac support in Phase 2)
+## Current Status — FEATURE COMPLETE
+
+All core backend, UI screens, packaging, and architecture refactors are done. The app is fully functional as a Windows .exe.
 
 ---
 
 ## Tech Stack
 
-| Layer | Tool | Why |
+| Layer | Tool | Notes |
 |---|---|---|
-| Language | Python 3.12 | Primary language (venv active) |
-| UI | PyQt6 | Professional desktop UI, packages well |
-| Vector DB | ChromaDB (persistent) | Free, local, no setup |
-| Embeddings | gemini-embedding-001 | Replaced text-embedding-004 (deprecated Jan 2026) |
-| LLM | gemini-2.5-flash | Replaced gemini-1.5-flash (not available on new SDK) |
-| Word Output | python-docx | Editable .docx — user can tweak before sending |
-| Static Storage | profile.json | Name, contact, education |
-| Packaging | PyInstaller | Produces .exe |
-| Env vars | python-dotenv | API key management |
+| Language | Python 3.12 | WSL for dev, Windows for build |
+| UI | PyQt6 | Light theme via QSS |
+| Vector DB | ChromaDB (persistent) | Project-level documents, not bullet chunks |
+| Embeddings | gemini-embedding-001 | 3072 dims, with in-memory cache |
+| LLM | gemini-2.5-flash | 6 calls per analysis |
+| Word Output | python-docx | Editable .docx resume + cover letter |
+| Skills Registry | skills.json | Static, categorized, always shown in resume |
+| Profile Storage | profile.json | Name, contact, education |
+| Packaging | PyInstaller | Folder build via --collect-all flags |
+| Env vars | python-dotenv | GEMINI_API_KEY |
 
-### ⚠️ SDK Change — Critical
-The old `google-generativeai` package is fully deprecated. Use the new `google-genai` package:
+### ⚠️ Critical SDK Notes
 ```python
-# WRONG — old, deprecated
-import google.generativeai as genai
-
 # CORRECT — new SDK
 from google import genai
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-```
 
-### ⚠️ Model Names — Critical
-Both the embedding model and LLM changed with the new SDK:
+# CORRECT model names
+LLM:        gemini-2.5-flash
+Embeddings: gemini-embedding-001  (3072 dimensions)
 
-| Purpose | Old (broken) | New (correct) |
-|---|---|---|
-| Embeddings | text-embedding-004 | gemini-embedding-001 |
-| LLM | gemini-1.5-flash | gemini-2.5-flash |
-
-- `gemini-embedding-001` produces **3072-dimensional** vectors (up from 768)
-- ChromaDB handles the new dimensions automatically
-
-### ⚠️ Output Format
-Originally planned as PDF (fpdf2). Changed to **Word (.docx)** via `python-docx` so users can edit before sending.
-
-### Future LLM Swap Path
-```
-Now:       gemini-2.5-flash  (free)
-Later:     Gemini Pro        (paid, same API — minimal code change)
-Rich mode: Claude API        (swap ~5 lines in generator.py only)
-Offline:   Ollama llama3     (fully local, no API costs)
+# OLD — deprecated, do not use
+import google.generativeai
+text-embedding-004
+gemini-1.5-flash
 ```
 
 ---
@@ -65,11 +47,11 @@ Offline:   Ollama llama3     (fully local, no API costs)
 ## Environment Setup
 
 ```bash
-# WSL — from project root
+# WSL
 python3 -m venv venv
 source venv/bin/activate
-pip install --upgrade pip
 pip install -r requirements.txt
+python main.py
 ```
 
 ### requirements.txt
@@ -79,13 +61,18 @@ chromadb>=0.5.0
 google-genai>=1.0.0
 python-docx>=1.1.0
 python-dotenv>=1.0.0
+requests>=2.31.0
 ```
 
-Note: `fpdf2` removed — replaced by `python-docx`.
-
-### .env (never commit)
+### .env
 ```
-GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_API_KEY=your_key_here
+```
+
+### Reset data (testing)
+```bash
+rm -f data/profile.json data/skills.json
+rm -rf data/chromadb/*
 ```
 
 ---
@@ -94,255 +81,82 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ```
 job-copilot/
-│
 ├── core/
 │   ├── __init__.py
-│   ├── profile.py        ← ✅ DONE — Profile + Education dataclasses, load/save/exists
-│   ├── embeddings.py     ← ✅ DONE — Gemini embedding wrapper (gemini-embedding-001)
-│   ├── database.py       ← ✅ DONE — ChromaDB add/query logic (4 categories)
-│   ├── generator.py      ← ✅ DONE — RAG pipeline, skill extraction, gap analysis, all sections
-│   └── docx_builder.py   ← ✅ DONE — python-docx Word document assembly
-│
+│   ├── profile.py        ← ✅ Profile + Education dataclasses
+│   ├── embeddings.py     ← ✅ Gemini embedding wrapper + cache
+│   ├── database.py       ← ✅ ChromaDB project-level store + hybrid retrieval
+│   ├── generator.py      ← ✅ RAG pipeline, gap analysis, all generation
+│   ├── docx_builder.py   ← ✅ Word document assembly
+│   └── skills.py         ← ✅ skills.json read/write
 ├── ui/
 │   ├── __init__.py
-│   ├── main_window.py    ← ⏳ TODO — main PyQt6 window
-│   ├── setup_screen.py   ← ⏳ NEXT — first time profile + education setup
-│   ├── add_experience.py ← ⏳ TODO — form to add chunks (projects, skills, soft skills, jobs)
-│   ├── analyze_job.py    ← ⏳ TODO — JD input + results display
-│   └── settings.py       ← ⏳ TODO — edit profile anytime
-│
+│   ├── styles.py         ← ✅ Global QSS stylesheet
+│   ├── main_window.py    ← ✅ Sidebar nav, QStackedWidget
+│   ├── setup_screen.py   ← ✅ First run profile + education
+│   ├── add_experience.py ← ✅ Project/job structured form
+│   ├── analyze_job.py    ← ✅ Gap analysis + generate docs
+│   ├── skills_screen.py  ← ✅ Skills registry manager
+│   └── settings.py       ← ✅ Edit profile
 ├── data/
-│   ├── chromadb/         ← persistent vector DB (auto created by ChromaDB)
-│   └── profile.json      ← static user data (auto created on first run)
-│
-├── output/
-│   └── resumes/          ← generated .docx files saved here
-│
-├── .env                  ← GEMINI_API_KEY (never commit)
-├── .env.example          ← template showing required keys
-├── .gitignore            ← venv/, .env, data/chromadb/, output/resumes/, __pycache__/
-├── main.py               ← ⏳ TODO — app entry point
-├── requirements.txt      ← all dependencies
-└── context.md            ← this file
+│   ├── chromadb/         ← gitignored, auto created
+│   ├── profile.json      ← gitignored, auto created
+│   └── skills.json       ← gitignored, auto created
+├── output/resumes/       ← gitignored, generated .docx files
+├── main.py               ← ✅ Entry point, first run detection
+├── requirements.txt
+├── .env.example
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## Completed Modules
+## Architecture — Project-Level RAG
 
-### ✅ core/profile.py
-Uses Python dataclasses. Two classes: `Profile` and `Education`.
+### Key Design Decision
+Switched from bullet-level chunks to project-level documents. This was the most important architectural change.
 
-**Key design decisions:**
-- Required fields: `name`, `email`. Everything else is `Optional`
-- `Education.gpa` is optional
-- Supports multiple degrees via `education: list[Education]`
-- `save()` is a method on `Profile` — serializes via `asdict()` to JSON
-- `load()` is a `@staticmethod` — deserializes and reconstructs dataclasses
-- `profile_exists()` is a standalone module-level function (needed before any object exists)
-
-**Error handling:**
-- `FileNotFoundError` if profile.json doesn't exist
-- `ValueError` if JSON is malformed
-- `ValueError` if `name` or `email` are missing
-
-**Usage:**
-```python
-from core.profile import Profile, Education, profile_exists
-
-if not profile_exists():
-    show_setup_screen()
-
-p = Profile(
-    name="Jane",
-    email="jane@email.com",
-    education=[Education(degree="BSc CS", institution="U of C", graduation_year="2025", gpa="3.8")]
-)
-p.save()
-
-p = Profile.load()
+**Old (broken):**
+```
+chunk_001: "Built React frontend — YYC Track"
+chunk_002: "Led team of 5 — YYC Track"
+chunk_003: "Configured Docker — YYC Track"
+→ 8 skills × 8 embedding calls = rate limits, duplicate retrieval, prompt bloat
 ```
 
----
-
-### ✅ core/embeddings.py
-Single function `embed(text)` — converts a string to a vector of floats.
-
-**Key design decisions:**
-- Gemini client initialized once at module level (`_client`) — not per call
-- Model: `gemini-embedding-001` (3072 dimensions)
-- Raises `ValueError` on empty/whitespace input
-
-**Usage:**
-```python
-from core.embeddings import embed
-vector = embed("Led a team of 5 developers")
-# returns list of 3072 floats
+**New (correct):**
+```
+document_001: "YYC Track | React, Node.js, MongoDB, Docker | Built MERN app... Led team... Configured Docker..."
+→ 1 embedding call per analysis, no duplicates, clean prompts
 ```
 
----
+### Data Model
 
-### ✅ core/database.py
-ChromaDB wrapper. Stores and queries experience chunks.
-
-**Valid categories (4 total):**
-- `project` — individual bullets from personal/academic projects
-- `job` — bullets from part-time or full-time work experience
-- `skill` — technical skills with context
-- `softskill` — soft skills with context
-
-**Key design decisions:**
-- `PersistentClient` at `./data/chromadb` — survives restarts
-- Single collection named `"experience"` — all chunks in one place
-- `query_chunks()` caps `n_results` with `int(min(n_results, count))` — ChromaDB requires strict int
-- `query_chunks_by_category()` filters by category using ChromaDB `where` clause
-- `get_chunks_by_category()` retrieves all stored chunks of a given category (used for Skills section)
-
-**Functions:**
-```python
-add_chunk(text: str, category: str) -> None
-query_chunks(skill_text: str, n_results: int = 5) -> list[dict]
-query_chunks_by_category(skill_text: str, category: str, n_results: int = 5) -> list[dict]
-get_all_chunks() -> list[dict]
-get_chunks_by_category(category: str) -> list[dict]
-chunk_count() -> int
+**ChromaDB document per project/job:**
 ```
+Text (embedded):
+"YYC Track | React, Node.js, MongoDB, Docker | Built MERN app..."
 
-**Return format:**
-```python
-[{"text": "Led a team of 5...", "category": "project", "distance": 0.312}]
-```
-
----
-
-### ✅ core/generator.py
-The brain of the app. Orchestrates all Gemini calls and ChromaDB queries.
-
-**5 Gemini calls per job application:**
-1. `extract_skills(jd_text)` — parses JD into structured skill categories
-2. `retailor_chunks(chunks, jd_text)` — rewrites retrieved bullets to match JD language
-3. `generate_summary(jd_text, chunks, profile)` — 3-4 sentence tailored summary
-4. `generate_projects(jd_text, chunks, profile)` — projects section (2-4 bullets per heading)
-5. `generate_experience(jd_text, chunks, profile)` — work experience section (2-4 bullets per heading)
-6. `generate_skills(skill_chunks)` — grouped skills section
-7. `generate_cover_letter(jd_text, chunks, profile)` — 3 paragraph cover letter
-
-Note: `analyze_gaps()` makes NO Gemini calls — pure ChromaDB distance math.
-
-**Key design decisions:**
-- `retailor_chunks()` rewrites bullets to match JD language WITHOUT inventing experience
-- Projects and jobs are retrieved and generated separately — distinct sections in the doc
-- Skills section pulls ALL skill chunks (not just relevant ones) via `get_chunks_by_category()`
-- Softskill chunks feed into summary and cover letter, not a dedicated section
-- `run_analysis()` is the single entry point the UI calls — returns everything in one dict
-- Chunks deduplicated across skill queries using a `seen` set
-
-**Distance thresholds:**
-```
-distance < 0.40   → ✅ Strong match
-distance 0.40–0.70 → ⚠️ Partial match
-distance > 0.70   → ❌ Missing (confidence = 0%)
-```
-
-**run_analysis() return format:**
-```python
+Metadata:
 {
-    "skills": {"required": [...], "nice_to_have": [...], "soft": [...]},
-    "gap_analysis": {
-        "overall_match": 73,
-        "skills": [
-            {"skill": "React", "type": "required", "status": "strong", "confidence": 87, "distance": 0.261},
-        ],
-        "missing_skills": ["Docker", "Kubernetes"]
-    },
-    "chunks_used": [{"text": "...", "category": "project", "distance": 0.3}],
-    "summary": "Jane is a full stack developer...",
-    "projects": "YYC Track\n- Built React frontend...\n- Led team of 5...",
-    "experience": "Cashier — Superstore\n- Processed transactions...",
-    "skills_section": "Languages: Python, JavaScript\nFrameworks: React, Node.js",
-    "cover_letter": "Dear Hiring Manager..."
+  "type": "project",          # project | job | softskill
+  "name": "YYC Track",
+  "stack": "React, Node.js, MongoDB, Docker",
+  "role": "Team Member",
+  "description": "Capstone Web Application (Live)",
+  "bullets": "[...json encoded list...]"
 }
 ```
 
----
-
-### ✅ core/docx_builder.py
-Assembles Word documents from generator output.
-
-**Resume section order:**
-1. Name + contact header (centered)
-2. Summary
-3. Experience (job chunks) — only rendered if job chunks exist
-4. Projects (project chunks) — only rendered if project chunks exist
-5. Skills (grouped category: skill, skill, skill format)
-6. Education (always shown in full from profile.json)
-
-**Key design decisions:**
-- US Letter (8.5x11), 0.75in margins for resume, 1in for cover letter
-- Section headings: blue horizontal rule + uppercase label
-- `_render_bulleted_section()` parses Gemini output — lines starting with `-` or `•` = bullets, everything else = subsection heading
-- `_render_skills_section()` parses `Category: skill1, skill2` lines — category label is bold
-- Experience and Projects sections are conditionally rendered — skipped if no chunks exist
-- Both functions return the output path as a string
-
-**Functions:**
+### Hybrid Retrieval Scoring
 ```python
-build_resume(profile, summary, projects, experience, skills_section, filename) -> str
-build_cover_letter(profile, cover_letter_text, filename) -> str
+score = 0.7 * semantic_similarity + 0.3 * keyword_overlap
 ```
+Keyword overlap handles tech names (GitHub Actions, Jest, Azure AI) that pure semantics misses.
 
-**Usage:**
-```python
-from core.docx_builder import build_resume, build_cover_letter
-
-resume_path = build_resume(
-    p,
-    result["summary"],
-    result["projects"],
-    result["experience"],
-    result["skills_section"],
-    "resume.docx"
-)
-cover_path = build_cover_letter(p, result["cover_letter"], "cover_letter.docx")
-```
-
----
-
-## Data Architecture
-
-### 1. Static Data — profile.json
-Always included in every resume. Does NOT live in ChromaDB.
-
-```json
-{
-  "name": "Your Name",
-  "email": "you@email.com",
-  "phone": "403-555-0000",
-  "linkedin": "linkedin.com/in/yourname",
-  "github": "github.com/yourname",
-  "location": "Calgary, AB",
-  "education": [
-    {
-      "degree": "BSc Computer Science",
-      "institution": "University of Calgary",
-      "graduation_year": "2025",
-      "gpa": "3.8"
-    }
-  ]
-}
-```
-
-### 2. Dynamic Data — ChromaDB (4 categories)
-
-| Category | What goes in | Used for |
-|---|---|---|
-| `project` | Bullets from personal/academic projects | Projects section |
-| `job` | Bullets from part-time/full-time jobs | Experience section |
-| `skill` | Technical skills with context | Skills section (all chunks) |
-| `softskill` | Soft skills with context | Summary + cover letter |
-
-### 3. Generated On The Fly — Never Stored
-Summary, resume content, and cover letter generated fresh every time per job.
+### Collection Name
+`experience_v2` — if you ever clear ChromaDB, this is the collection that gets recreated.
 
 ---
 
@@ -350,186 +164,275 @@ Summary, resume content, and cover letter generated fresh every time per job.
 
 ```
 First Run:
-1. Setup screen collects name, contact info, education → saved to profile.json
+1. main.py checks profile_exists() → False → SetupScreen
+2. User fills profile + education → profile.json saved
+3. on_complete() → MainWindow shown
+
+Adding Experience:
+4. User fills structured form (name, stack, role, description, bullets)
+5. All bullets stored as ONE ChromaDB document per project/job
+6. One embedding call per entry saved
 
 Every Job Application:
-2. User adds experience chunks via form → embedded + stored in ChromaDB
-3. User pastes a job description
-4. Gemini extracts required/nice-to-have/soft skills from JD as JSON        [call 1]
-5. App queries ChromaDB for each skill → distance score per skill
-6. Skills categorized: ✅ Strong / ⚠️ Partial / ❌ Missing
-7. Gemini rewrites retrieved chunks to match JD language                     [call 2]
-8. Gemini generates personal summary                                         [call 3]
-9. Gemini generates Projects section (2-4 bullets per heading)               [call 4]
-10. Gemini generates Experience section (2-4 bullets per heading)            [call 5]
-11. Gemini generates Skills section (grouped by category)                    [call 6]
-12. Gemini generates cover letter                                            [call 7]
-13. python-docx assembles resume.docx and cover_letter.docx
-14. User opens and edits in Word before sending
+7. User pastes JD → clicks Analyse
+8. AnalysisWorker (QThread) runs run_analysis():
+   a. Gemini extracts skills + role_summary from JD       [call 1]
+   b. Gap analysis vs skills.json (string match, no API)
+   c. Build single query: role_summary + all keywords
+   d. ONE embedding call → ChromaDB hybrid search         [1 embed]
+   e. Top 3 projects + top 2 jobs selected
+   f. Gemini generates summary                            [call 2]
+   g. Gemini generates Projects section                   [call 3]
+   h. Gemini generates Experience section                 [call 4]
+   i. Gemini generates cover letter                       [call 5]
+9. Results rendered in UI
+10. User clicks Generate → resume.docx + cover_letter.docx
+11. Output folder opens automatically
+
+Total per analysis: 5 Gemini calls + 1 embedding call
 ```
 
 ---
 
-## Skill Gap Analysis
+## Completed Modules
 
+### ✅ core/profile.py
+```python
+@dataclass class Education: degree, institution, graduation_year, gpa(optional)
+@dataclass class Profile: name*, email*, phone, linkedin, github, location, education[]
+
+Profile.save()          # serializes to data/profile.json
+Profile.load()          # deserializes, raises FileNotFoundError / ValueError
+profile_exists() -> bool
 ```
-Overall Match: 73%
 
-✅ React          87%   strong match
-✅ CI/CD          82%   strong match
-⚠️  PostgreSQL    55%   you have MongoDB, they want PostgreSQL
-❌ Kubernetes      0%   not in your experience
-❌ GraphQL         0%   not in your experience
+### ✅ core/embeddings.py
+```python
+embed(text: str) -> list[float]   # gemini-embedding-001, 3072 dims
+clear_cache()                      # clears in-memory cache
+
+# Module-level cache: _cache dict[str, list[float]]
+# Module-level callback: _status_callback (set by AnalysisWorker for UI updates)
+# Retries on 429/503 with 30s * attempt backoff, max 5 attempts
+```
+
+### ✅ core/database.py
+```python
+# Collection: "experience_v2"
+# Valid types: "project", "job", "softskill"
+
+add_entry(entry_type, name, bullets, stack, role, description) -> None
+query_entries(query_text, n_results=10) -> list[dict]
+hybrid_score(entry, keywords) -> float   # 0.7 semantic + 0.3 keyword
+get_top_entries(query_text, keywords, top_projects=3, top_jobs=2) -> dict
+get_all_entries() -> list[dict]
+entry_count() -> int
+clear_all() -> None
+
+# Entry dict format:
+{
+    "type": "project",
+    "name": "YYC Track",
+    "stack": "React, Node.js...",
+    "role": "Team Member",
+    "description": "Capstone (Live)",
+    "bullets": ["Built MERN app...", "Integrated Azure AI..."],
+    "distance": 0.312,
+    "score": 0.847,   # hybrid score, only in query results
+}
+```
+
+### ✅ core/generator.py
+```python
+extract_skills(jd_text) -> dict         # {role_summary, required, nice_to_have, soft}
+analyze_gaps(skills, skills_data) -> dict  # checks skills.json only, no API calls
+generate_summary(jd_text, entries, profile, skills_data) -> str
+generate_projects(jd_text, projects, profile, skills_data) -> str
+generate_experience(jd_text, jobs, profile, skills_data) -> str
+generate_cover_letter(jd_text, entries, profile, skills_data) -> str
+run_analysis(jd_text, profile) -> dict
+
+# run_analysis() return format:
+{
+    "skills": {"role_summary": "...", "required": [...], "nice_to_have": [...], "soft": [...]},
+    "gap_analysis": {
+        "overall_match": 73,
+        "skills": [{"skill": "React", "type": "required", "status": "strong", "confidence": 95}],
+        "missing_skills": ["Kubernetes"]
+    },
+    "entries_used": {"projects": [...], "jobs": [...], "softskills": [...]},
+    "summary": "...",
+    "projects": "YYC Track\n- Bullet...",
+    "experience": "Cashier — Superstore\n- Bullet...",
+    "cover_letter": "Dear Hiring Manager..."
+}
+```
+
+### ✅ core/skills.py
+```python
+SKILLS_PATH = "./data/skills.json"
+
+load_skills() -> dict           # {"Languages": ["Python", "JS"], "Frameworks": [...]}
+save_skills(data: dict) -> None
+add_category(category: str) -> None
+remove_category(category: str) -> None
+add_skill(category: str, skill: str) -> None
+remove_skill(category: str, skill: str) -> None
+```
+
+### ✅ core/docx_builder.py
+```python
+build_resume(profile, summary, projects, experience, filename) -> str
+build_cover_letter(profile, cover_letter_text, filename) -> str
+
+# Resume section order:
+# 1. Name + contact (centered)
+# 2. Summary
+# 3. Experience (jobs) — skipped if empty
+# 4. Projects — skipped if empty
+# 5. Skills (from skills.json) — skipped if empty
+# 6. Education (always shown)
+
+# Key rules:
+# - US Letter (8.5x11), 0.75in margins for resume, 1in for cover letter
+# - Section headings: blue horizontal rule + uppercase label
+# - Never unicode bullets — use List Bullet style
+# - US Letter must be set explicitly (python-docx defaults to A4)
 ```
 
 ---
 
-## Word Document Structure
+## UI Modules
 
-### resume.docx
+### ✅ ui/styles.py
+Global QSS stylesheet. Apply once: `app.setStyleSheet(STYLESHEET)`
+
+**Design tokens:**
 ```
-Name                                    ← profile.json (large, centered)
-email | phone | linkedin | github       ← profile.json (small, centered)
-─────────────────────────────
-SUMMARY
-3-4 sentence tailored summary
-─────────────────────────────
-EXPERIENCE                              ← only shown if job chunks exist
-Job Title — Company
-  • Retailored bullet (2-4 per heading)
-─────────────────────────────
-PROJECTS                                ← only shown if project chunks exist
-Project Name
-  • Retailored bullet (2-4 per heading)
-─────────────────────────────
-SKILLS
-Languages:   Python, JavaScript
-Frameworks:  React, Node.js
-Tools:       Docker, Git
-─────────────────────────────
-EDUCATION
-BSc Computer Science — University of Calgary
-2025 | GPA: 3.8
+Background:  #F8F9FA   Surface:  #FFFFFF
+Primary:     #4361EE   Text:     #1A1A2E
+Muted:       #6C757D   Border:   #DEE2E6
+Danger:      #E63946   Success:  #2E7D32
+Warning:     #F57F17
 ```
 
-### cover_letter.docx
-```
-Name (centered)
-email | phone | location
+**Named object styles (setObjectName):**
+- `title` — 24px bold
+- `subtitle` — 13px muted
+- `section_label` — 11px bold uppercase muted
+- `card` — white card with border + 12px radius
+- `secondary` — outlined blue button
+- `danger` — outlined red button, auto-sized (no fixed height)
+- `nav_btn` — sidebar nav, checkable, supports :checked state
 
-Paragraph 1...
-Paragraph 2...
-Paragraph 3...
-```
+**Critical:** Never set fixed heights on buttons — use `min-height` in stylesheet only. Fixed heights cause text clipping on Windows.
+
+### ✅ ui/main_window.py
+Sidebar (220px) + QStackedWidget. 4 nav buttons: Add Experience, Analyze Job, Skills, Settings. All checkable, `_switch(index)` updates stack + button states.
+
+### ✅ ui/setup_screen.py
+First run only. Dynamic education entries (EducationEntry widget). Min 1 education required. Calls `on_complete()` after save.
+
+### ✅ ui/add_experience.py
+Structured form with type dropdown (Project / Work Experience / Job / Soft Skill). Fields swap based on type:
+- Project: Name, Stack, Role, Description, Bullets
+- Job: Name, Stack (optional), Job Title, Company, Bullets
+- Softskill: Name, Bullets only
+
+Right panel shows all stored entries as EntryCard widgets with badge + bullets.
+
+### ✅ ui/analyze_job.py
+Left: JD text input + Analyse button.
+Right: renders after analysis — overall score card, skill breakdown rows (SkillRow with progress bar), missing skills as red pills, Generate button.
+
+`AnalysisWorker(QThread)` runs `run_analysis()` in background. Emits:
+- `finished(dict)` — triggers `_render_results()`
+- `error(str)` — shows QMessageBox
+- `status(str)` — updates status label (rate limit countdown)
+
+Sets `core.embeddings._status_callback` before running so rate limit messages pipe to UI.
+
+### ✅ ui/skills_screen.py
+Top bar with category input + Add Category button. Scrollable CategoryCard list. Each card: header with Remove Category button, SkillPill list, inline Add skill input. All buttons auto-sized, no fixed heights.
+
+### ✅ ui/settings.py
+Mirrors setup_screen. Pre-fills all fields from `Profile.load()`. Dynamic education entries. Saves on "Save Changes".
 
 ---
 
-## Key Things To Remember
+## Key Gotchas
 
-1. **Use `google-genai`, not `google-generativeai`** — old package is dead.
-
-2. **Model strings:**
-   - LLM: `gemini-2.5-flash`
-   - Embeddings: `gemini-embedding-001` (3072 dimensions)
-
-3. **ChromaDB `n_results` must be plain `int`:**
-   ```python
-   capped = int(min(n_results, count))
-   ```
-
-4. **4 chunk categories:** `project`, `job`, `skill`, `softskill` — enforced in `database.py`.
-
-5. **Skills section uses ALL skill chunks** — not just relevant ones. `get_chunks_by_category("skill")` not `query_chunks()`.
-
-6. **Experience section will be empty** until `job` chunks are added — this is correct behaviour, section is skipped in the doc.
-
-7. **ChromaDB PersistentClient:**
-   ```python
-   client = chromadb.PersistentClient(path="./data/chromadb")
-   ```
-
-8. **API key always from .env:**
-   ```python
-   from dotenv import load_dotenv
-   load_dotenv()
-   api_key = os.getenv("GEMINI_API_KEY")
-   ```
-
-9. **Check profile.json on startup:**
-   ```python
-   from core.profile import profile_exists
-   if not profile_exists():
-       show_setup_screen()
-   ```
-
-10. **Personal summary never stored** — generated fresh per job.
-
-11. **Education in profile.json not ChromaDB** — always shown in full.
-
-12. **Never use unicode bullets in docx** — use `List Bullet` style.
-
-13. **US Letter page size must be set explicitly** — python-docx defaults to A4.
-
-14. **Swapping LLMs** only requires changing `_MODEL` in `generator.py`.
-
-15. **WSL for development**, Windows for final .exe build and testing.
-
-16. **PyInstaller build command:**
-    ```bash
-    pyinstaller --onefile --windowed --icon=app_icon.ico --name="JobCopilot" main.py
-    ```
-
-17. **Gemini free tier:** gemini-2.5-flash 1500 req/day, gemini-embedding-001 generous free limit.
+1. **ChromaDB `n_results` must be `int(min(...))`** — strict int required
+2. **Button fixed heights cause text clipping on Windows** — use min-height in QSS only
+3. **Emoji in nav buttons don't render on Windows** — use plain text
+4. **`google-genai` not `google-generativeai`** — old package dead
+5. **ChromaDB collection is `experience_v2`** — v1 (bullet chunks) is incompatible
+6. **skills.json gap analysis is string match only** — no embedding call
+7. **`_status_callback` must be reset to None after worker finishes** — prevents stale references
+8. **US Letter must be set explicitly** — python-docx defaults to A4
+9. **Never unicode bullets in docx** — use `List Bullet` style
+10. **PyInstaller needs `--collect-all chromadb --collect-all google.genai`** — dynamic imports
 
 ---
 
-## Build Order
-1. `core/profile.py`       ← ✅ done
-2. `core/embeddings.py`    ← ✅ done
-3. `core/database.py`      ← ✅ done
-4. `core/generator.py`     ← ✅ done
-5. `core/docx_builder.py`  ← ✅ done
-6. `ui/setup_screen.py`    ← ⏳ NEXT
-7. `ui/add_experience.py`  ← ⏳ todo
-8. `ui/analyze_job.py`     ← ⏳ todo
-9. `ui/settings.py`        ← ⏳ todo
-10. `ui/main_window.py`    ← ⏳ todo
-11. `main.py`              ← ⏳ todo
-12. PyInstaller packaging  ← ⏳ todo
+## Building .exe (Windows)
+
+```cmd
+# In Windows Command Prompt with venv active
+python -m PyInstaller --windowed --name JobCopilot --collect-all chromadb --collect-all google.genai main.py
+```
+
+Or with spec file (after first build, reuse `JobCopilot.spec`):
+```cmd
+python -m PyInstaller JobCopilot.spec
+```
+
+Output: `dist/JobCopilot/JobCopilot.exe` — share the entire `dist/JobCopilot/` folder.
+
+---
+
+## Recommended Chunk Strategy
+
+**Per project: 6-8 focused bullets maximum.**
+Each bullet should cover one distinct responsibility. If two bullets mention the same technology, merge them.
+
+**Good format for Add Experience:**
+```
+Type:        Project
+Name:        YYC Track
+Stack:       React, Node.js, Express.js, MongoDB, Azure AI, Docker, GitHub Actions
+Role:        Team Member
+Description: Capstone Web Application (Live)
+Bullets:
+- Built full-stack MERN app for City of Calgary transit reviews with OpenStreetMap integration
+- Integrated Azure AI Sentiment Analysis + Content Safety for review scoring and moderation
+- Designed MongoDB schemas with aggregation pipelines for CEI computation and leaderboards
+- Architected RESTful Node.js/Express API for review submissions and data retrieval
+- Configured Docker + GitHub Actions CI/CD for automated testing and deployment
+- Wrote Jest unit tests to validate API routes and data transformation logic
+```
 
 ---
 
 ## Status
 
-### ✅ Done
-- Project planning and architecture
-- Tech stack finalized (with SDK/model corrections)
-- venv created, all dependencies installed
-- `core/profile.py` ✅
-- `core/embeddings.py` ✅
-- `core/database.py` ✅ (updated — added `job` category, `query_chunks_by_category`, `get_chunks_by_category`)
-- `core/generator.py` ✅ (updated — separate Projects/Experience/Skills sections, retailoring, 2-4 bullet rule)
-- `core/docx_builder.py` ✅ (updated — 4 sections: Experience, Projects, Skills, Education; conditional rendering)
+### ✅ Complete
+- Full core backend (profile, embeddings, database, generator, docx builder, skills)
+- Full UI (setup, add experience, analyze job, skills, settings, main window)
+- Global stylesheet — light theme, no fixed-height buttons
+- Project-level RAG architecture (not bullet chunks)
+- Hybrid retrieval (70% semantic + 30% keyword)
+- Embedding cache (zero duplicate API calls)
+- Rate limit retry (429 + 503, exponential backoff, UI status updates)
+- Gap analysis using skills.json (no embedding calls)
+- Windows .exe build working
+- README.md
+- .gitignore
 
-### ⏳ To Do
-
-#### Phase 1 — UI
-- [ ] `ui/setup_screen.py` — first time setup form (name, contact, education)
-- [ ] `ui/add_experience.py` — form to add chunks (project / job / skill / softskill)
-- [ ] `ui/analyze_job.py` — JD input, match score, gap analysis display, generate button
-- [ ] `ui/settings.py` — edit profile and education anytime
-- [ ] `ui/main_window.py` — main app window tying all screens together
-
-#### Phase 1 — Finishing
-- [ ] `main.py` — entry point with first run detection
-- [ ] End to end pipeline test with real chunks
-- [ ] PyInstaller .exe build
-- [ ] Test .exe on clean Windows machine
-
-#### Phase 2 — Future
-- [ ] Web app scaffold (React + FastAPI)
-- [ ] PostgreSQL job application tracker
-- [ ] Application status tracking (Applied / Interviewed / Offered / Rejected)
+### ⏳ Future (Phase 2)
+- [ ] Job application tracker (Applied / Interviewed / Offered / Rejected)
 - [ ] Analytics dashboard
-- [ ] Multi user auth (Clerk or Supabase)
-- [ ] Deploy to Railway or Render
+- [ ] Web app (React + FastAPI + PostgreSQL)
+- [ ] Multi-user auth (Clerk or Supabase)
+- [ ] GitHub Actions cross-platform builds (Windows .exe + Mac .app)
+- [ ] Ollama hybrid (local embeddings + Gemini LLM) to eliminate rate limits entirely

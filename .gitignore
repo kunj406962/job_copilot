@@ -13,9 +13,7 @@ dist/
 build/
 
 # Data — never commit user data
-data/chromadb/
-data/profile.json
-data/skills.json
+data/
 
 # Output
 output/resumes/

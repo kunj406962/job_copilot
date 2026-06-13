@@ -8,6 +8,7 @@ from ui.add_experience import AddExperienceScreen
 from ui.analyze_job import AnalyzeJobScreen
 from ui.skills_screen import SkillsScreen
 from ui.settings import SettingsScreen
+from ui.history_screen import HistoryScreen
 
 
 class MainWindow(QMainWindow):
@@ -42,8 +43,9 @@ class MainWindow(QMainWindow):
         nav_items = [
             ("Add Experience", 0),
             ("Analyze Job", 1),
-            ("Skills", 2),
-            ("Settings", 3),
+            ("History", 2),
+            ("Skills", 3),
+            ("Settings", 4),
         ]
         for label, index in nav_items:
             btn = QPushButton(label)
@@ -64,16 +66,15 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(sidebar)
 
-        # ── Divider ──
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.VLine)
         divider.setStyleSheet("color: #DEE2E6;")
         layout.addWidget(divider)
 
-        # ── Screens ──
         self.stack = QStackedWidget()
         self.stack.addWidget(AddExperienceScreen())
         self.stack.addWidget(AnalyzeJobScreen())
+        self.stack.addWidget(HistoryScreen())
         self.stack.addWidget(SkillsScreen())
         self.stack.addWidget(SettingsScreen())
         layout.addWidget(self.stack, stretch=1)

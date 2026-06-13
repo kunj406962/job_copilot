@@ -4,7 +4,7 @@ import time
 from google import genai
 from google.genai.errors import ClientError
 from dotenv import load_dotenv
-from core.database import get_top_entries
+from core.database import get_top_entries, query_entries, hybrid_score
 from core.profile import Profile
 from core.skills import load_skills
 
@@ -84,7 +84,7 @@ def extract_skills(jd_text: str) -> dict:
         clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(clean)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Gemini returned invalid JSON for skill extraction: {e}\nRaw: {raw}")
+        raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw}")
 
 
 def analyze_gaps(skills: dict, skills_data: dict) -> dict:
@@ -105,27 +105,19 @@ def analyze_gaps(skills: dict, skills_data: dict) -> dict:
 
     for skill_type, skill in all_skills:
         skill_lower = skill.lower()
-        skills_json_match = any(
+        match = any(
             skill_lower in known or known in skill_lower
             for known in all_known_skills
         )
-
-        if skills_json_match:
-            status = "strong"
-            confidence = 95
-            distance = 0.05
-        else:
-            status = "missing"
-            confidence = 0
-            distance = 2.0
-
+        status = "strong" if match else "missing"
+        confidence = 95 if match else 0
         total_score += confidence
         results.append({
             "skill": skill,
             "type": skill_type,
             "status": status,
             "confidence": confidence,
-            "distance": round(distance, 4),
+            "distance": 0.05 if match else 2.0,
         })
 
     overall = round(total_score / len(results)) if results else 0
@@ -138,12 +130,84 @@ def analyze_gaps(skills: dict, skills_data: dict) -> dict:
     }
 
 
-def generate_summary(jd_text: str, entries: dict, profile: Profile, skills_data: dict) -> str:
-    all_entries = entries["projects"] + entries["jobs"] + entries["softskills"]
-    context = _format_entries_for_prompt(all_entries)
+def search_entries(jd_text: str, skills: dict) -> dict:
+    """
+    Phase 1 — vector search only.
+    Returns all entries ranked by hybrid score with top picks flagged.
+    No generation calls.
+    """
+    all_keywords = (
+        skills.get("required", []) +
+        skills.get("nice_to_have", []) +
+        skills.get("soft", [])
+    )
+    role_summary = skills.get("role_summary", "")
+    query_text = f"{role_summary} {' '.join(all_keywords)}"
+
+    # Get all entries ranked by hybrid score
+    from core.database import get_all_entries
+    all_entries = get_all_entries()
+
+    if not all_entries:
+        return {"ranked": [], "keywords": all_keywords, "query_text": query_text}
+
+    # Run semantic query for distances
+    from core.database import query_entries
+    semantic_results = query_entries(query_text, n_results=len(all_entries))
+
+    # Build a distance lookup by entry id
+    distance_map = {r["id"]: r["distance"] for r in semantic_results}
+
+    # Score all entries
+    ranked = []
+    for entry in all_entries:
+        entry["distance"] = distance_map.get(entry.get("id", ""), 1.0)
+        # Build document string for keyword matching since get_all_entries doesnt include it
+        entry["document"] = f"{entry.get('name', '')} {entry.get('stack', '')} {' '.join(entry.get('bullets', []))}"
+        entry["score"] = hybrid_score(entry, all_keywords)
+        ranked.append(entry)
+
+    # Sort by score descending
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+
+    # Flag top 3 projects and top 2 jobs as AI picks
+    project_count = 0
+    job_count = 0
+    for entry in ranked:
+        entry["ai_pick"] = False
+        if entry["type"] == "project" and project_count < 3:
+            entry["ai_pick"] = True
+            project_count += 1
+        elif entry["type"] == "job" and job_count < 2:
+            entry["ai_pick"] = True
+            job_count += 1
+
+    return {
+        "ranked": ranked,
+        "keywords": all_keywords,
+        "query_text": query_text,
+    }
+
+
+def generate_documents(
+    jd_text: str,
+    profile: Profile,
+    selected_entries: list[dict],
+    skills_data: dict,
+) -> dict:
+    """
+    Phase 2 — document generation only.
+    Takes pre-selected entries, runs 3 Gemini calls.
+    """
+    projects = [e for e in selected_entries if e["type"] == "project"]
+    jobs = [e for e in selected_entries if e["type"] == "job"]
+    softskills = [e for e in selected_entries if e["type"] == "softskill"]
+
+    all_chunks = projects + jobs + softskills
     skills_text = _format_skills_for_prompt(skills_data)
 
-    prompt = f"""
+    # Summary
+    summary_prompt = f"""
     Write a 3-4 sentence professional resume summary for {profile.name} tailored to this job.
     Tone should match the job — startup = energetic, corporate = polished.
     Do NOT use the phrase "results-driven". Return only the summary text, no labels or headings.
@@ -152,30 +216,25 @@ def generate_summary(jd_text: str, entries: dict, profile: Profile, skills_data:
     {skills_text}
 
     Relevant experience:
-    {context}
+    {_format_entries_for_prompt(all_chunks)}
 
     Job Description:
     {jd_text}
     """
-    return _call_gemini(prompt)
+    summary = _call_gemini(summary_prompt)
 
-
-def generate_projects(jd_text: str, projects: list[dict], profile: Profile, skills_data: dict) -> str:
-    if not projects:
-        return ""
-    context = _format_entries_for_prompt(projects)
-    skills_text = _format_skills_for_prompt(skills_data)
-
-    prompt = f"""
+    # Projects section
+    if projects:
+        projects_prompt = f"""
     You are a professional resume writer. Create a Projects section for {profile.name}'s resume.
 
     Rules:
-    - Use the project names provided as headings exactly as given
-    - Select and include the most relevant bullets for this job (minimum 2, maximum 4 per project)
+    - Use the project names as headings exactly as given
+    - Select the most relevant bullets (minimum 2, maximum 4 per project)
     - Rewrite bullets to match the job description language and keywords
-    - Do NOT invent experience — only use what is provided
+    - Do NOT invent experience
     - Use strong action verbs
-    - Return ONLY the project headings and bullets, no extra commentary
+    - Return ONLY headings and bullets, no extra commentary
 
     Format:
     Project Name
@@ -186,56 +245,49 @@ def generate_projects(jd_text: str, projects: list[dict], profile: Profile, skil
     {skills_text}
 
     Projects:
-    {context}
+    {_format_entries_for_prompt(projects)}
 
     Job Description:
     {jd_text}
     """
-    return _call_gemini(prompt)
+        projects_text = _call_gemini(projects_prompt)
+    else:
+        projects_text = ""
 
+    # Experience section
+    if jobs:
+        experience_prompt = f"""
+        You are a professional resume writer. Create a Work Experience section for {profile.name}'s resume.
 
-def generate_experience(jd_text: str, jobs: list[dict], profile: Profile, skills_data: dict) -> str:
-    if not jobs:
-        return ""
-    context = _format_entries_for_prompt(jobs)
-    skills_text = _format_skills_for_prompt(skills_data)
+        Rules:
+        - Use job/company names as headings exactly as given
+        - Select the most relevant bullets (minimum 2, maximum 4 per role)
+        - Rewrite bullets to match the job description language
+        - Do NOT invent experience
+        - Use strong action verbs
+        - Return ONLY headings and bullets, no extra commentary
 
-    prompt = f"""
-    You are a professional resume writer. Create a Work Experience section for {profile.name}'s resume.
+        Format:
+        Job Title — Company
+        - Bullet point
 
-    Rules:
-    - Use the job/company names as headings exactly as given
-    - Select the most relevant bullets (minimum 2, maximum 4 per role)
-    - Rewrite bullets to match the job description language and keywords
-    - Do NOT invent experience — only use what is provided
-    - Use strong action verbs
-    - Return ONLY the headings and bullets, no extra commentary
+        Candidate skills:
+        {skills_text}
 
-    Format:
-    Job Title — Company
-    - Bullet point
-    - Bullet point
+        Work Experience:
+        {_format_entries_for_prompt(jobs)}
 
-    Candidate skills:
-    {skills_text}
+        Job Description:
+        {jd_text}
+        """
+        experience_text = _call_gemini(experience_prompt)
+    else:
+        experience_text = ""
 
-    Work Experience:
-    {context}
-
-    Job Description:
-    {jd_text}
-    """
-    return _call_gemini(prompt)
-
-
-def generate_cover_letter(jd_text: str, entries: dict, profile: Profile, skills_data: dict) -> str:
-    all_entries = entries["projects"] + entries["jobs"]
-    context = _format_entries_for_prompt(all_entries)
-    skills_text = _format_skills_for_prompt(skills_data)
+    # Cover letter
     edu = profile.education[0] if profile.education else None
     edu_line = f"{edu.degree} from {edu.institution}" if edu else ""
-
-    prompt = f"""
+    cover_prompt = f"""
     Write a professional cover letter for {profile.name} applying to this job.
     Contact: {profile.email} | {profile.location or ""}
     Education: {edu_line}
@@ -244,52 +296,37 @@ def generate_cover_letter(jd_text: str, entries: dict, profile: Profile, skills_
     {skills_text}
 
     Relevant experience:
-    {context}
+    {_format_entries_for_prompt(all_chunks)}
 
     Job Description:
     {jd_text}
 
     Keep it to 3 paragraphs. Do not include a date or address header. Return only the cover letter text.
     """
-    return _call_gemini(prompt)
+    cover_letter = _call_gemini(cover_prompt)
+
+    return {
+        "summary": summary,
+        "projects": projects_text,
+        "experience": experience_text,
+        "cover_letter": cover_letter,
+    }
 
 
 def run_analysis(jd_text: str, profile: Profile) -> dict:
+    """Legacy single-call entry point. Used for backward compat."""
     skills_data = load_skills()
-
-    # Step 1 — extract skills + role summary (1 Gemini call)
     skills = extract_skills(jd_text)
     gap_analysis = analyze_gaps(skills, skills_data)
-
-    # Step 2 — build single retrieval query (1 embedding call)
-    all_keywords = (
-        skills.get("required", []) +
-        skills.get("nice_to_have", []) +
-        skills.get("soft", [])
-    )
-    role_summary = skills.get("role_summary", "")
-    query_text = f"{role_summary} {' '.join(all_keywords)}"
-
-    # Step 3 — retrieve top entries using hybrid scoring
-    entries = get_top_entries(
-        query_text=query_text,
-        keywords=all_keywords,
-        top_projects=3,
-        top_jobs=2,
-    )
-
-    # Step 4 — generate all sections
-    summary = generate_summary(jd_text, entries, profile, skills_data)
-    projects = generate_projects(jd_text, entries["projects"], profile, skills_data)
-    experience = generate_experience(jd_text, entries["jobs"], profile, skills_data)
-    cover_letter = generate_cover_letter(jd_text, entries, profile, skills_data)
+    search_results = search_entries(jd_text, skills)
+    selected = [e for e in search_results["ranked"] if e.get("ai_pick")]
+    docs = generate_documents(jd_text, profile, selected, skills_data)
 
     return {
         "skills": skills,
         "gap_analysis": gap_analysis,
-        "entries_used": entries,
-        "summary": summary,
-        "projects": projects,
-        "experience": experience,
-        "cover_letter": cover_letter,
+        "entries_used": {"projects": [e for e in selected if e["type"] == "project"],
+                         "jobs": [e for e in selected if e["type"] == "job"],
+                         "softskills": []},
+        **docs,
     }

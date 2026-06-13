@@ -123,8 +123,8 @@ def hybrid_score(entry: dict, keywords: list[str]) -> float:
 def get_top_entries(
     query_text: str,
     keywords: list[str],
-    top_projects: int = 3,
-    top_jobs: int = 2,
+    top_projects: int = 4,
+    top_jobs: int = 1,
 ) -> dict:
     all_entries = query_entries(query_text, n_results=10)
 

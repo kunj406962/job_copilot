@@ -72,9 +72,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(divider)
 
         self.stack = QStackedWidget()
+        self.analyze_screen = AnalyzeJobScreen()
+
         self.stack.addWidget(AddExperienceScreen())
-        self.stack.addWidget(AnalyzeJobScreen())
-        self.stack.addWidget(HistoryScreen())
+        self.stack.addWidget(self.analyze_screen)
+        self.stack.addWidget(HistoryScreen(on_open_record=self._open_history_record))
         self.stack.addWidget(SkillsScreen())
         self.stack.addWidget(SettingsScreen())
         layout.addWidget(self.stack, stretch=1)
@@ -83,3 +85,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_buttons):
             btn.setChecked(i == index)
+
+    def _open_history_record(self, record: dict):
+        self.analyze_screen.load_record(record)
+        self._switch(1)

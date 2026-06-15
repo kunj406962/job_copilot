@@ -565,8 +565,7 @@ class AnalyzeJobScreen(QWidget):
         if not self.skills or not self.search_results:
             QMessageBox.warning(self, "Nothing to Save", "Run an analysis first.")
             return
-
-        job_name = self.job_name_input.text().strip() or "Untitled Job"
+        
         selected_ids = [cb.entry.get("id") for cb in self.entry_checkboxes if cb.is_checked()]
 
         self.analysis_id = save_progress(
@@ -616,17 +615,20 @@ class AnalyzeJobScreen(QWidget):
             QMessageBox.critical(self, "Profile Error", str(e))
             return
 
+        job_name = self.job_name_input.text().strip() or "Untitled Job"
+        slug = "_".join(job_name.lower().split())
+        slug = "".join(c for c in slug if c.isalnum() or c == "_")
+
         try:
             resume_path = build_resume(
-                profile, docs["summary"], docs["projects"], docs["experience"], "resume.docx",
+                profile, docs["summary"], docs["projects"], docs["experience"], f"{slug}_resume.docx",
             )
-            cover_path = build_cover_letter(profile, docs["cover_letter"], "cover_letter.docx")
+            cover_path = build_cover_letter(profile, docs["cover_letter"], f"{slug}_cover_letter.docx")
         except Exception as e:
             QMessageBox.critical(self, "Build Error", str(e))
             return
 
         # Save progress + docs to history
-        job_name = self.job_name_input.text().strip() or "Untitled Job"
         selected_ids = [cb.entry.get("id") for cb in self.entry_checkboxes if cb.is_checked()]
 
         self.analysis_id = save_progress(

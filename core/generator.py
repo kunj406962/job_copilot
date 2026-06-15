@@ -226,30 +226,30 @@ def generate_documents(
     # Projects section
     if projects:
         projects_prompt = f"""
-    You are a professional resume writer. Create a Projects section for {profile.name}'s resume.
+        You are a professional resume writer. Create a Projects section for {profile.name}'s resume.
 
-    Rules:
-    - Use the project names as headings exactly as given
-    - Select the most relevant bullets (minimum 2, maximum 4 per project)
-    - Rewrite bullets to match the job description language and keywords
-    - Do NOT invent experience
-    - Use strong action verbs
-    - Return ONLY headings and bullets, no extra commentary
+        Rules:
+        - Use the project names as headings exactly as given
+        - Select the most relevant bullets (minimum 2, maximum 4 per project)
+        - Rewrite bullets to match the job description language and keywords
+        - Do NOT invent experience
+        - Use strong action verbs
+        - Return ONLY headings and bullets, no extra commentary
 
-    Format:
-    Project Name
-    - Bullet point
-    - Bullet point
+        Format:
+        Project Name
+        - Bullet point
+        - Bullet point
 
-    Candidate skills:
-    {skills_text}
+        Candidate skills:
+        {skills_text}
 
-    Projects:
-    {_format_entries_for_prompt(projects)}
+        Projects:
+        {_format_entries_for_prompt(projects)}
 
-    Job Description:
-    {jd_text}
-    """
+        Job Description:
+        {jd_text}
+        """
         projects_text = _call_gemini(projects_prompt)
     else:
         projects_text = ""

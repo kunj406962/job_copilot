@@ -1,3 +1,8 @@
+<!--
+Project overview and setup guide for Job Copilot. This file documents the app
+purpose, architecture, installation steps, and packaging workflow for users.
+-->
+
 # Job Copilot
 
 A desktop application that uses RAG (Retrieval Augmented Generation) and a local vector database to help you tailor resumes and cover letters to specific job descriptions. Paste a job description, get a match score, see exactly which skills you're missing, and generate a tailored resume and cover letter as editable Word documents.

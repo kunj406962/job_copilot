@@ -1,3 +1,9 @@
+"""Primary application shell with sidebar navigation and stacked screens.
+
+This module composes the major UI screens, manages navigation state, and
+routes history selections back into the job-analysis screen.
+"""
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame
@@ -12,7 +18,14 @@ from ui.history_screen import HistoryScreen
 
 
 class MainWindow(QMainWindow):
+    """Host the main application screens and navigation controls."""
+
     def __init__(self):
+        """Create the main window and initialize the default screen.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.setWindowTitle("Job Copilot")
         self.setMinimumSize(1100, 700)
@@ -20,6 +33,14 @@ class MainWindow(QMainWindow):
         self._switch(0)
 
     def _build_ui(self):
+        """Build the sidebar, divider, and stacked content area.
+
+        Returns:
+            None
+
+        Side Effects:
+            Instantiates all child screens and wires navigation callbacks.
+        """
         central = QWidget()
         self.setCentralWidget(central)
         layout = QHBoxLayout(central)
@@ -82,10 +103,29 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.stack, stretch=1)
 
     def _switch(self, index: int):
+        """Show the screen at the requested stacked index.
+
+        Args:
+            index: The stacked widget index to activate.
+
+        Returns:
+            None
+        """
         self.stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_buttons):
             btn.setChecked(i == index)
 
     def _open_history_record(self, record: dict):
+        """Open a saved history record in the analyze screen.
+
+        Args:
+            record: The saved history entry to restore.
+
+        Returns:
+            None
+
+        Side Effects:
+            Loads the record into the analysis screen and switches tabs.
+        """
         self.analyze_screen.load_record(record)
         self._switch(1)

@@ -1,3 +1,9 @@
+"""Global Qt stylesheet for the Job Copilot desktop UI.
+
+This module defines the shared light theme, component styling, and layout
+constants used across the PyQt screens.
+"""
+
 STYLESHEET = """
 /* ── App-wide ── */
 QWidget {

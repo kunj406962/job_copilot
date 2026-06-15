@@ -1,3 +1,9 @@
+"""Small Gemini connectivity check used for local API validation.
+
+This script loads the environment, creates a Gemini client, and prints a test
+response so the API setup can be verified quickly.
+"""
+
 import os
 import json
 import time
@@ -8,13 +14,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-_MODEL = "gemini-2.5-flash"
+_MODEL = "gemini-2.5-flash"  # Smoke-test model for the API connectivity check.
 
-STRONG_MATCH = 0.40
-PARTIAL_MATCH = 0.70
+STRONG_MATCH = 0.40  # Match threshold placeholder kept for parity with app code.
+PARTIAL_MATCH = 0.70  # Match threshold placeholder kept for parity with app code.
 
 
 def _call_gemini(prompt: str) -> str:
+    """Call Gemini with simple retry handling.
+
+    Args:
+        prompt: The prompt to send to Gemini.
+
+    Returns:
+        The trimmed text response.
+
+    Side Effects:
+        Retries on transient quota errors and may sleep between attempts.
+    """
     for attempt in range(5):
         try:
             response = _client.models.generate_content(

@@ -1,3 +1,8 @@
+<!--
+Project context notes for Job Copilot. This file captures architecture,
+workflow, and environment details used during development and maintenance.
+-->
+
 # Job Application Copilot — Project Context
 
 ## What This Project Is

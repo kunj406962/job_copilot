@@ -1,3 +1,9 @@
+"""History screen for browsing and restoring saved job analyses.
+
+This module presents past application records, allows deletion, and passes
+selected records back to the analysis screen when opened.
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QMessageBox
@@ -7,7 +13,19 @@ from core.history import load_all, delete_analysis
 
 
 class HistoryCard(QFrame):
+    """Render one saved analysis record in the history list."""
+
     def __init__(self, record: dict, on_open, on_delete):
+        """Create a history card for one saved record.
+
+        Args:
+            record: The saved analysis record to display.
+            on_open: Callback to open the record.
+            on_delete: Callback to delete the record.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.record = record
         self.on_open = on_open
@@ -16,6 +34,11 @@ class HistoryCard(QFrame):
         self._build_ui()
 
     def _build_ui(self):
+        """Build the history card layout.
+
+        Returns:
+            None
+        """
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
@@ -84,20 +107,45 @@ class HistoryCard(QFrame):
         layout.addLayout(btn_col)
 
     def _on_open_clicked(self):
+        """Open the underlying history record.
+
+        Returns:
+            None
+        """
         self.on_open(self.record)
 
     def _on_delete_clicked(self):
+        """Request deletion of the underlying history record.
+
+        Returns:
+            None
+        """
         self.on_delete(self.record)
 
 
 class HistoryScreen(QWidget):
+    """List saved analyses and let the user reopen or delete them."""
+
     def __init__(self, on_open_record=None):
+        """Create the history screen and load saved records.
+
+        Args:
+            on_open_record: Optional callback used when a record is opened.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.on_open_record = on_open_record
         self._build_ui()
         self._load()
 
     def _build_ui(self):
+        """Build the history screen layout.
+
+        Returns:
+            None
+        """
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -136,10 +184,23 @@ class HistoryScreen(QWidget):
         outer.addWidget(scroll)
 
     def showEvent(self, event):
+        """Refresh the record list when the screen becomes visible.
+
+        Args:
+            event: The Qt show event.
+
+        Returns:
+            None
+        """
         super().showEvent(event)
         self._load()
 
     def _load(self):
+        """Reload saved analyses from disk and rebuild the list.
+
+        Returns:
+            None
+        """
         for i in reversed(range(self.cards_layout.count())):
             item = self.cards_layout.itemAt(i)
             if item.widget():
@@ -168,10 +229,26 @@ class HistoryScreen(QWidget):
         self.cards_layout.addStretch()
 
     def _open(self, record: dict):
+        """Forward the selected record to the parent screen.
+
+        Args:
+            record: The record to open.
+
+        Returns:
+            None
+        """
         if self.on_open_record:
             self.on_open_record(record)
 
     def _delete(self, record: dict):
+        """Confirm and delete a saved record.
+
+        Args:
+            record: The record to delete.
+
+        Returns:
+            None
+        """
         reply = QMessageBox.question(
             self, "Delete",
             f"Delete '{record['job_name']}' from history?",

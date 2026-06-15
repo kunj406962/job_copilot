@@ -1,3 +1,6 @@
+# Runtime dependencies for Job Copilot. Keep this list aligned with the imports
+# used by the Qt app, Gemini client, ChromaDB store, and Word document builder.
+
 PyQt6>=6.6.0
 chromadb>=0.5.0
 google-genai>=1.0.0

@@ -1,3 +1,9 @@
+"""Skills registry management screen for categorized local skill data.
+
+This module lets users add and remove skill categories and individual skills,
+and it depends on the skills persistence helpers in core.skills.
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QScrollArea, QFrame, QMessageBox
@@ -7,7 +13,19 @@ from core.skills import load_skills, add_category, remove_category, add_skill, r
 
 
 class SkillPill(QWidget):
+    """Render one removable skill chip inside a category card."""
+
     def __init__(self, skill: str, category: str, on_remove):
+        """Create a pill for a single skill.
+
+        Args:
+            skill: The skill label to display.
+            category: The owning category name.
+            on_remove: Callback to invoke when the pill is removed.
+
+        Returns:
+            None
+        """
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
@@ -38,7 +56,19 @@ class SkillPill(QWidget):
 
 
 class CategoryCard(QFrame):
+    """Render one skills category, its pills, and its add/remove controls."""
+
     def __init__(self, category: str, skills: list, on_refresh):
+        """Create a category card for the provided skill list.
+
+        Args:
+            category: The category name to display.
+            skills: Skills currently stored in the category.
+            on_refresh: Callback to reload the screen after edits.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.category = category
         self.on_refresh = on_refresh
@@ -46,6 +76,14 @@ class CategoryCard(QFrame):
         self._build_ui(skills)
 
     def _build_ui(self, skills: list):
+        """Build the category card layout.
+
+        Args:
+            skills: Skills currently stored in the category.
+
+        Returns:
+            None
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
@@ -99,6 +137,14 @@ class CategoryCard(QFrame):
         layout.addLayout(add_row)
 
     def _add_pill(self, skill: str):
+        """Add a rendered pill for one stored skill.
+
+        Args:
+            skill: The skill label to display.
+
+        Returns:
+            None
+        """
         pill = SkillPill(
             skill=skill,
             category=self.category,
@@ -107,6 +153,11 @@ class CategoryCard(QFrame):
         self.pills_layout.addWidget(pill)
 
     def _add_skill(self):
+        """Persist a new skill from the input field.
+
+        Returns:
+            None
+        """
         skill = self.skill_input.text().strip()
         if not skill:
             return
@@ -115,10 +166,23 @@ class CategoryCard(QFrame):
         self.on_refresh()
 
     def _remove_skill(self, skill: str):
+        """Remove a skill from the category and refresh the screen.
+
+        Args:
+            skill: The skill label to remove.
+
+        Returns:
+            None
+        """
         remove_skill(self.category, skill)
         self.on_refresh()
 
     def _remove_category(self):
+        """Confirm and remove the entire category.
+
+        Returns:
+            None
+        """
         reply = QMessageBox.question(
             self, "Remove Category",
             f"Remove '{self.category}' and all its skills?",
@@ -130,12 +194,24 @@ class CategoryCard(QFrame):
 
 
 class SkillsScreen(QWidget):
+    """Manage the categorized skills registry stored on disk."""
+
     def __init__(self):
+        """Create the skills screen and load existing categories.
+
+        Returns:
+            None
+        """
         super().__init__()
         self._build_ui()
         self._load()
 
     def _build_ui(self):
+        """Build the skills screen layout.
+
+        Returns:
+            None
+        """
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -186,6 +262,11 @@ class SkillsScreen(QWidget):
         outer.addWidget(scroll)
 
     def _add_category(self):
+        """Persist a new category from the input field.
+
+        Returns:
+            None
+        """
         category = self.cat_input.text().strip()
         if not category:
             return
@@ -194,6 +275,11 @@ class SkillsScreen(QWidget):
         self._load()
 
     def _load(self):
+        """Reload all category cards from the saved skills file.
+
+        Returns:
+            None
+        """
         while self.cards_layout.count() > 1:
             item = self.cards_layout.takeAt(0)
             if item.widget():

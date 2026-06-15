@@ -1,3 +1,5 @@
+# Ignore editor, build, and user data artifacts for Job Copilot.
+
 # Environment
 .env
 

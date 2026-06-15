@@ -1,3 +1,9 @@
+"""PyInstaller build specification for the Job Copilot desktop executable.
+
+This file describes the frozen app entry point, bundled data, and hidden
+imports needed to ship the Windows build.
+"""
+
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 

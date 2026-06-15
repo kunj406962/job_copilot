@@ -1,3 +1,9 @@
+"""Job-description analysis and Gemini generation pipeline.
+
+This module extracts skills from a job description, scores stored experience,
+and generates resume and cover-letter content using Gemini.
+"""
+
 import os
 import json
 import time
@@ -11,13 +17,24 @@ from core.skills import load_skills
 load_dotenv()
 
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-_MODEL = "gemini-2.5-flash"
+_MODEL = "gemini-2.5-flash"  # Primary text-generation model for analysis.
 
-STRONG_MATCH = 0.40
-PARTIAL_MATCH = 0.70
+STRONG_MATCH = 0.40  # Reserved threshold for future match classification.
+PARTIAL_MATCH = 0.70  # Reserved threshold for future match classification.
 
 
 def _call_gemini(prompt: str) -> str:
+    """Call Gemini with retry handling for transient quota errors.
+
+    Args:
+        prompt: The prompt to send to the model.
+
+    Returns:
+        The trimmed text response from Gemini.
+
+    Side Effects:
+        Retries on 429 and 503 errors with incremental sleeps.
+    """
     for attempt in range(5):
         try:
             response = _client.models.generate_content(
@@ -36,6 +53,14 @@ def _call_gemini(prompt: str) -> str:
 
 
 def _format_skills_for_prompt(skills_data: dict) -> str:
+    """Format the structured skills registry for prompt inclusion.
+
+    Args:
+        skills_data: Skills grouped by category.
+
+    Returns:
+        A newline-delimited string ready for prompt insertion.
+    """
     if not skills_data:
         return "No structured skills provided."
     lines = []
@@ -46,6 +71,14 @@ def _format_skills_for_prompt(skills_data: dict) -> str:
 
 
 def _format_entries_for_prompt(entries: list[dict]) -> str:
+    """Format ranked experience entries for prompt inclusion.
+
+    Args:
+        entries: Entry dictionaries to render.
+
+    Returns:
+        A newline-delimited description of the provided entries.
+    """
     if not entries:
         return ""
     sections = []
@@ -64,6 +97,19 @@ def _format_entries_for_prompt(entries: list[dict]) -> str:
 
 
 def extract_skills(jd_text: str) -> dict:
+    """Extract a role summary and skill lists from a job description.
+
+    Args:
+        jd_text: Raw job description text.
+
+    Returns:
+        A parsed JSON object with role_summary, required, nice_to_have, and
+        soft skill lists.
+
+    Side Effects:
+        Makes a Gemini text-generation call and may raise if the response is
+        not valid JSON.
+    """
     prompt = f"""
     Extract skills and a role summary from this job description.
     Return ONLY a JSON object, no markdown, no explanation.
@@ -88,6 +134,15 @@ def extract_skills(jd_text: str) -> dict:
 
 
 def analyze_gaps(skills: dict, skills_data: dict) -> dict:
+    """Compare extracted skills against the saved skills registry.
+
+    Args:
+        skills: Skills parsed from the job description.
+        skills_data: Categorized skills stored locally.
+
+    Returns:
+        A match summary with per-skill confidence and missing skills.
+    """
     all_skills = (
         [("required", s) for s in skills.get("required", [])] +
         [("nice_to_have", s) for s in skills.get("nice_to_have", [])] +
@@ -131,10 +186,18 @@ def analyze_gaps(skills: dict, skills_data: dict) -> dict:
 
 
 def search_entries(jd_text: str, skills: dict) -> dict:
-    """
-    Phase 1 — vector search only.
-    Returns all entries ranked by hybrid score with top picks flagged.
-    No generation calls.
+    """Rank stored experience for a job description without generating text.
+
+    Args:
+        jd_text: Raw job description text.
+        skills: Extracted job skills used to build the search query.
+
+    Returns:
+        Ranked entries plus the keywords and query text used for retrieval.
+
+    Side Effects:
+        Calls the ChromaDB retrieval layer and mutates the returned entries with
+        score and ai_pick flags.
     """
     all_keywords = (
         skills.get("required", []) +
@@ -144,21 +207,22 @@ def search_entries(jd_text: str, skills: dict) -> dict:
     role_summary = skills.get("role_summary", "")
     query_text = f"{role_summary} {' '.join(all_keywords)}"
 
-    # Get all entries ranked by hybrid score
+    # Load the full store first so we can score every entry consistently.
     from core.database import get_all_entries
     all_entries = get_all_entries()
 
     if not all_entries:
         return {"ranked": [], "keywords": all_keywords, "query_text": query_text}
 
-    # Run semantic query for distances
+    # Use the semantic query only for distances, then blend with keyword score.
     from core.database import query_entries
     semantic_results = query_entries(query_text, n_results=len(all_entries))
 
-    # Build a distance lookup by entry id
+    # Build a lookup so each stored entry can be scored even if it was not
+    # returned in the exact semantic ranking order.
     distance_map = {r["id"]: r["distance"] for r in semantic_results}
 
-    # Score all entries
+    # Score every entry before sorting so the final list reflects both signals.
     ranked = []
     for entry in all_entries:
         entry["distance"] = distance_map.get(entry.get("id", ""), 1.0)
@@ -167,10 +231,10 @@ def search_entries(jd_text: str, skills: dict) -> dict:
         entry["score"] = hybrid_score(entry, all_keywords)
         ranked.append(entry)
 
-    # Sort by score descending
+    # Highest blended score should appear first in the UI.
     ranked.sort(key=lambda x: x["score"], reverse=True)
 
-    # Flag top 3 projects and top 2 jobs as AI picks
+    # Preselect a small number of strong candidates to reduce manual review.
     project_count = 0
     job_count = 0
     for entry in ranked:
@@ -195,9 +259,19 @@ def generate_documents(
     selected_entries: list[dict],
     skills_data: dict,
 ) -> dict:
-    """
-    Phase 2 — document generation only.
-    Takes pre-selected entries, runs 3 Gemini calls.
+    """Generate resume sections and a cover letter from selected entries.
+
+    Args:
+        jd_text: Raw job description text.
+        profile: The user's saved profile.
+        selected_entries: Manually selected or AI-picked experience entries.
+        skills_data: Structured skills registry for prompt context.
+
+    Returns:
+        A dictionary containing summary, projects, experience, and cover letter.
+
+    Side Effects:
+        Makes multiple Gemini calls to generate tailored content.
     """
     projects = [e for e in selected_entries if e["type"] == "project"]
     jobs = [e for e in selected_entries if e["type"] == "job"]
@@ -206,7 +280,7 @@ def generate_documents(
     all_chunks = projects + jobs + softskills
     skills_text = _format_skills_for_prompt(skills_data)
 
-    # Summary
+    # Generate the summary first so the output has a concise top-level pitch.
     summary_prompt = f"""
     Write a 3-4 sentence professional resume summary for {profile.name} tailored to this job.
     Tone should match the job — startup = energetic, corporate = polished.
@@ -223,7 +297,7 @@ def generate_documents(
     """
     summary = _call_gemini(summary_prompt)
 
-    # Projects section
+    # Generate a projects section only when relevant entries exist.
     if projects:
         projects_prompt = f"""
         You are a professional resume writer. Create a Projects section for {profile.name}'s resume.
@@ -254,7 +328,7 @@ def generate_documents(
     else:
         projects_text = ""
 
-    # Experience section
+    # Generate a work-experience section only when relevant job entries exist.
     if jobs:
         experience_prompt = f"""
         You are a professional resume writer. Create a Work Experience section for {profile.name}'s resume.
@@ -284,7 +358,7 @@ def generate_documents(
     else:
         experience_text = ""
 
-    # Cover letter
+    # Use the generated context to produce a separate cover letter.
     edu = profile.education[0] if profile.education else None
     edu_line = f"{edu.degree} from {edu.institution}" if edu else ""
     cover_prompt = f"""
@@ -314,7 +388,16 @@ def generate_documents(
 
 
 def run_analysis(jd_text: str, profile: Profile) -> dict:
-    """Legacy single-call entry point. Used for backward compat."""
+    """Run the full analysis flow for a job description.
+
+    Args:
+        jd_text: Raw job description text.
+        profile: The user's saved profile.
+
+    Returns:
+        A combined analysis result with skills, gap analysis, and generated
+        document content.
+    """
     skills_data = load_skills()
     skills = extract_skills(jd_text)
     gap_analysis = analyze_gaps(skills, skills_data)

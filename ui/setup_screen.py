@@ -1,3 +1,9 @@
+"""First-run profile setup screen for collecting user contact and education.
+
+This module captures the minimum profile data needed before the main app can
+run and depends on the shared Profile and Education models.
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QMessageBox, QScrollArea, QFrame
@@ -7,12 +13,27 @@ from core.profile import Profile, Education
 
 
 class EducationEntry(QWidget):
+    """Render one editable education block inside the setup form."""
+
     def __init__(self, on_remove):
+        """Create an education entry widget.
+
+        Args:
+            on_remove: Callback to invoke when the entry is removed.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.on_remove = on_remove
         self._build_ui()
 
     def _build_ui(self):
+        """Build the education entry card and its inputs.
+
+        Returns:
+            None
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -48,6 +69,15 @@ class EducationEntry(QWidget):
         layout.addWidget(card)
 
     def _field(self, layout, label: str) -> QLineEdit:
+        """Create a labeled text field inside the provided layout.
+
+        Args:
+            layout: Parent layout to receive the label and field.
+            label: Label text to display above the field.
+
+        Returns:
+            The created QLineEdit.
+        """
         field = QLineEdit()
         field.setFixedHeight(40)
         layout.addWidget(QLabel(label))
@@ -55,12 +85,29 @@ class EducationEntry(QWidget):
         return field
 
     def _field_widget(self, placeholder: str = "") -> QLineEdit:
+        """Create a plain line edit with a placeholder.
+
+        Args:
+            placeholder: Placeholder text to show when the field is empty.
+
+        Returns:
+            The created QLineEdit.
+        """
         field = QLineEdit()
         field.setFixedHeight(40)
         field.setPlaceholderText(placeholder)
         return field
 
     def _labelled(self, field: QLineEdit, label: str) -> QWidget:
+        """Wrap an input field with a label for compact layout placement.
+
+        Args:
+            field: The field to wrap.
+            label: Label text to show above the field.
+
+        Returns:
+            A container widget holding the label and field.
+        """
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -70,6 +117,11 @@ class EducationEntry(QWidget):
         return wrapper
 
     def get_data(self) -> dict:
+        """Collect the current education entry values.
+
+        Returns:
+            A dictionary containing degree, institution, year, and GPA.
+        """
         return {
             "degree": self.degree.text().strip(),
             "institution": self.institution.text().strip(),
@@ -79,7 +131,17 @@ class EducationEntry(QWidget):
 
 
 class SetupScreen(QWidget):
+    """Collect the user's profile before the main application starts."""
+
     def __init__(self, on_complete):
+        """Create the setup screen and initialize empty education entries.
+
+        Args:
+            on_complete: Callback invoked after the profile is saved.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.on_complete = on_complete
         self.edu_entries = []
@@ -89,6 +151,15 @@ class SetupScreen(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        """Build the full first-run setup form.
+
+        Returns:
+            None
+
+        Side Effects:
+            Creates the scroll container, contact inputs, education list, and
+            save button.
+        """
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -172,11 +243,27 @@ class SetupScreen(QWidget):
         outer.addWidget(scroll)
 
     def _add_education(self):
+        """Append a new blank education entry to the form.
+
+        Returns:
+            None
+        """
         entry = EducationEntry(on_remove=lambda: self._remove_education(entry))
         self.edu_entries.append(entry)
         self.edu_container.addWidget(entry)
 
     def _remove_education(self, entry: EducationEntry):
+        """Remove an education entry unless it is the last one.
+
+        Args:
+            entry: The education widget to remove.
+
+        Returns:
+            None
+
+        Side Effects:
+            Shows a warning dialog when removal would leave no entries.
+        """
         if len(self.edu_entries) == 1:
             QMessageBox.warning(self, "Cannot Remove", "At least one education entry is required.")
             return
@@ -185,11 +272,28 @@ class SetupScreen(QWidget):
         entry.deleteLater()
 
     def _section_label(self, text: str) -> QLabel:
+        """Create a consistent section label for the setup form.
+
+        Args:
+            text: Label text to display.
+
+        Returns:
+            The configured QLabel.
+        """
         label = QLabel(text)
         label.setObjectName("section_label")
         return label
 
     def _field(self, layout, label: str) -> QLineEdit:
+        """Create a labeled required input field.
+
+        Args:
+            layout: Parent layout to receive the field.
+            label: Label text to display.
+
+        Returns:
+            The created QLineEdit.
+        """
         field = QLineEdit()
         field.setFixedHeight(40)
         layout.addWidget(QLabel(label))
@@ -198,12 +302,29 @@ class SetupScreen(QWidget):
         return field
 
     def _field_widget(self, placeholder: str = "") -> QLineEdit:
+        """Create a plain line edit used inside a labeled wrapper.
+
+        Args:
+            placeholder: Placeholder text to show when empty.
+
+        Returns:
+            The created QLineEdit.
+        """
         field = QLineEdit()
         field.setFixedHeight(40)
         field.setPlaceholderText(placeholder)
         return field
 
     def _labelled(self, field: QLineEdit, label: str) -> QWidget:
+        """Wrap a field with a label for compact row layouts.
+
+        Args:
+            field: The field to wrap.
+            label: Label text to display.
+
+        Returns:
+            A QWidget containing the label and field.
+        """
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -213,6 +334,15 @@ class SetupScreen(QWidget):
         return wrapper
 
     def _save(self):
+        """Validate the form and persist the profile to disk.
+
+        Returns:
+            None
+
+        Side Effects:
+            Shows validation dialogs, writes profile.json, and calls the
+            completion callback on success.
+        """
         name = self.name_input.text().strip()
         email = self.email_input.text().strip()
 

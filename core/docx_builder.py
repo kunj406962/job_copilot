@@ -1,3 +1,9 @@
+"""Word document builders for generated resumes and cover letters.
+
+This module formats profile data, selected experience, and skills into DOCX
+files using python-docx. It depends on profile and skills storage helpers.
+"""
+
 import os
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
@@ -7,10 +13,21 @@ from docx.oxml import OxmlElement
 from core.profile import Profile
 from core.skills import load_skills
 
-OUTPUT_DIR = "./output/resumes"
+OUTPUT_DIR = "./output/resumes"  # Destination folder for generated documents.
 
 
 def _add_horizontal_rule(doc: Document) -> None:
+    """Insert a thin section divider into the document.
+
+    Args:
+        doc: The document being rendered.
+
+    Returns:
+        None
+
+    Side Effects:
+        Appends a formatted paragraph to the document.
+    """
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(4)
@@ -26,6 +43,18 @@ def _add_horizontal_rule(doc: Document) -> None:
 
 
 def _add_section_heading(doc: Document, title: str) -> None:
+    """Render a styled section heading with a divider line.
+
+    Args:
+        doc: The document being rendered.
+        title: The section title to display.
+
+    Returns:
+        None
+
+    Side Effects:
+        Adds a divider line and a formatted heading paragraph.
+    """
     _add_horizontal_rule(doc)
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(8)
@@ -37,6 +66,18 @@ def _add_section_heading(doc: Document, title: str) -> None:
 
 
 def _add_bullet(doc: Document, text: str) -> None:
+    """Render a single bullet point in the document.
+
+    Args:
+        doc: The document being rendered.
+        text: The bullet text to add.
+
+    Returns:
+        None
+
+    Side Effects:
+        Appends a bullet paragraph using the Word bullet style.
+    """
     p = doc.add_paragraph(style="List Bullet")
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(2)
@@ -45,6 +86,15 @@ def _add_bullet(doc: Document, text: str) -> None:
 
 
 def _add_subsection_heading(doc: Document, title: str) -> None:
+    """Render a compact subsection heading.
+
+    Args:
+        doc: The document being rendered.
+        title: The subsection title to display.
+
+    Returns:
+        None
+    """
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(6)
     p.paragraph_format.space_after = Pt(2)
@@ -54,6 +104,18 @@ def _add_subsection_heading(doc: Document, title: str) -> None:
 
 
 def _render_bulleted_section(doc: Document, section_text: str) -> None:
+    """Render multiline resume content as headings and bullets.
+
+    Args:
+        doc: The document being rendered.
+        section_text: Raw section text from Gemini.
+
+    Returns:
+        None
+
+    Side Effects:
+        Parses each non-empty line and formats it as a bullet or subheading.
+    """
     if not section_text.strip():
         return
     for line in section_text.strip().split("\n"):
@@ -67,6 +129,17 @@ def _render_bulleted_section(doc: Document, section_text: str) -> None:
 
 
 def _render_skills_section(doc: Document) -> None:
+    """Render the structured skills registry into the resume.
+
+    Args:
+        doc: The document being rendered.
+
+    Returns:
+        None
+
+    Side Effects:
+        Loads skills from disk and appends category paragraphs.
+    """
     skills_data = load_skills()
     if not skills_data:
         return
@@ -90,6 +163,21 @@ def build_resume(
     experience: str,
     filename: str,
 ) -> str:
+    """Build a tailored resume document and save it to disk.
+
+    Args:
+        profile: The user's saved profile data.
+        summary: Generated resume summary text.
+        projects: Generated projects section text.
+        experience: Generated experience section text.
+        filename: Output filename for the document.
+
+    Returns:
+        The full filesystem path to the saved resume.
+
+    Side Effects:
+        Writes a .docx file under output/resumes.
+    """
     doc = Document()
 
     for section in doc.sections:
@@ -170,6 +258,19 @@ def build_resume(
 
 
 def build_cover_letter(profile: Profile, cover_letter_text: str, filename: str) -> str:
+    """Build a cover letter document and save it to disk.
+
+    Args:
+        profile: The user's saved profile data.
+        cover_letter_text: Generated cover letter content.
+        filename: Output filename for the document.
+
+    Returns:
+        The full filesystem path to the saved cover letter.
+
+    Side Effects:
+        Writes a .docx file under output/resumes.
+    """
     doc = Document()
 
     for section in doc.sections:

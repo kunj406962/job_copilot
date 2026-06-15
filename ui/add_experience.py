@@ -1,3 +1,9 @@
+"""Structured experience editor for projects, jobs, and soft skills.
+
+This module stores user experience entries in the local ChromaDB-backed store
+and provides editing and deletion controls for the saved entries list.
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QComboBox, QScrollArea, QFrame,
@@ -14,7 +20,19 @@ TYPE_OPTIONS = [
 
 
 class BulletEntry(QWidget):
+    """Render one bullet input row for an experience entry."""
+
     def __init__(self, placeholder: str, on_remove, text: str = ""):
+        """Create a bullet row.
+
+        Args:
+            placeholder: Placeholder text for the bullet editor.
+            on_remove: Callback to invoke when the bullet is removed.
+            text: Optional initial bullet text.
+
+        Returns:
+            None
+        """
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -35,11 +53,28 @@ class BulletEntry(QWidget):
         layout.addWidget(remove_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
     def text(self) -> str:
+        """Return the trimmed bullet text.
+
+        Returns:
+            The current bullet text.
+        """
         return self.text_input.toPlainText().strip()
 
 
 class EntryCard(QFrame):
+    """Render one stored experience entry in the read-only list."""
+
     def __init__(self, entry: dict, on_edit, on_delete):
+        """Create a card for one saved experience entry.
+
+        Args:
+            entry: The stored experience entry to display.
+            on_edit: Callback to invoke when editing the entry.
+            on_delete: Callback to invoke when deleting the entry.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.entry = entry
         self.on_edit = on_edit
@@ -48,6 +83,11 @@ class EntryCard(QFrame):
         self._build_ui()
 
     def _build_ui(self):
+        """Build the entry card layout.
+
+        Returns:
+            None
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
@@ -92,12 +132,30 @@ class EntryCard(QFrame):
             layout.addWidget(b)
 
     def _on_edit_clicked(self):
+        """Open the entry for editing.
+
+        Returns:
+            None
+        """
         self.on_edit(self.entry)
 
     def _on_delete_clicked(self):
+        """Request deletion of the displayed entry.
+
+        Returns:
+            None
+        """
         self.on_delete(self.entry["id"], self.entry["name"])
 
     def _badge_style(self, entry_type: str) -> str:
+        """Return the CSS used for the entry type badge.
+
+        Args:
+            entry_type: The stored entry type.
+
+        Returns:
+            A stylesheet string for the type badge.
+        """
         colors = {
             "project":   "background-color: #EEF1FD; color: #4361EE;",
             "job":       "background-color: #E8F5E9; color: #2E7D32;",
@@ -108,7 +166,14 @@ class EntryCard(QFrame):
 
 
 class AddExperienceScreen(QWidget):
+    """Create, edit, and list stored experience entries."""
+
     def __init__(self):
+        """Create the experience screen and load saved entries.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.bullet_entries = []
         self._editing_id = None
@@ -116,6 +181,11 @@ class AddExperienceScreen(QWidget):
         self._load_entries()
 
     def _build_ui(self):
+        """Build the add-experience layout and entry list.
+
+        Returns:
+            None
+        """
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -260,11 +330,27 @@ class AddExperienceScreen(QWidget):
         self._on_type_change(0)
 
     def _label(self, text: str) -> QLabel:
+        """Create a consistent label for form fields.
+
+        Args:
+            text: Label text to display.
+
+        Returns:
+            The configured QLabel.
+        """
         label = QLabel(text)
         label.setStyleSheet("font-weight: 600; color: #1A1A2E;")
         return label
 
     def _on_type_change(self, index: int):
+        """Update form fields to match the selected entry type.
+
+        Args:
+            index: The selected type index.
+
+        Returns:
+            None
+        """
         _, entry_type = TYPE_OPTIONS[index]
         if entry_type == "softskill":
             self.stack_label.hide(); self.stack_input.hide()
@@ -292,6 +378,14 @@ class AddExperienceScreen(QWidget):
             self.desc_label.show(); self.desc_input.show()
 
     def _add_bullet(self, text: str = ""):
+        """Append a new bullet editor to the form.
+
+        Args:
+            text: Optional initial bullet text.
+
+        Returns:
+            None
+        """
         # clicked signal passes a bool — ignore it, only use explicit text arg
         if isinstance(text, bool):
             text = ""
@@ -310,6 +404,14 @@ class AddExperienceScreen(QWidget):
         self.bullets_layout.addWidget(entry)
 
     def _remove_bullet(self, entry):
+        """Remove a bullet editor unless it is the last one.
+
+        Args:
+            entry: The bullet widget to remove.
+
+        Returns:
+            None
+        """
         if len(self.bullet_entries) == 1:
             QMessageBox.warning(self, "Cannot Remove", "At least one bullet is required.")
             return
@@ -318,6 +420,14 @@ class AddExperienceScreen(QWidget):
         entry.deleteLater()
 
     def _prefill_form(self, entry: dict):
+        """Load an existing entry into the edit form.
+
+        Args:
+            entry: The stored experience entry to edit.
+
+        Returns:
+            None
+        """
         for i, (_, t) in enumerate(TYPE_OPTIONS):
             if t == entry["type"]:
                 self.type_combo.setCurrentIndex(i)
@@ -345,6 +455,11 @@ class AddExperienceScreen(QWidget):
         self.cancel_btn.show()
 
     def _cancel_edit(self):
+        """Exit edit mode and clear the form.
+
+        Returns:
+            None
+        """
         self._editing_id = None
         self.form_title.setText("Add Experience")
         self.save_btn.setText("Save to Profile")
@@ -352,6 +467,11 @@ class AddExperienceScreen(QWidget):
         self._clear_form()
 
     def _clear_form(self):
+        """Reset the form to a blank state with one bullet row.
+
+        Returns:
+            None
+        """
         self.name_input.clear()
         self.stack_input.clear()
         self.role_input.clear()
@@ -364,6 +484,14 @@ class AddExperienceScreen(QWidget):
         self._add_bullet()
 
     def _save(self):
+        """Validate the form and store the entry.
+
+        Returns:
+            None
+
+        Side Effects:
+            Writes to the local ChromaDB collection and refreshes the list.
+        """
         _, entry_type = TYPE_OPTIONS[self.type_combo.currentIndex()]
         name = self.name_input.text().strip()
         stack = self.stack_input.text().strip()
@@ -410,6 +538,15 @@ class AddExperienceScreen(QWidget):
         self._load_entries()
 
     def _delete_entry(self, entry_id: str, name: str):
+        """Confirm and delete a stored experience entry.
+
+        Args:
+            entry_id: The entry identifier to remove.
+            name: The display name used in the confirmation prompt.
+
+        Returns:
+            None
+        """
         reply = QMessageBox.question(
             self, "Delete Entry",
             f"Delete '{name}'? This cannot be undone.",

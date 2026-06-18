@@ -387,6 +387,95 @@ def generate_documents(
     }
 
 
+def suggest_gap_fixes(gap_analysis: dict, selected_entries: list[dict], skills_data: dict) -> list[dict]:
+    """
+    Analyze missing/partial skills against ONLY the selected entries.
+    Distinguishes genuine gaps (no related experience) from phrasing gaps
+    (experience exists but isn't worded to surface the skill).
+
+    Returns a list of suggestion dicts:
+    {
+        "skill": "Relational Databases",
+        "verdict": "phrasing_gap" | "genuine_gap",
+        "reasoning": "...",
+        "fix_type": "add_skill" | "reword_bullet" | "none",
+        "target_entry": "YYC Track" or None,
+        "suggested_skill": "SQL" or None,
+        "original_bullet": "..." or None,
+        "suggested_bullet": "..." or None,
+    }
+    """
+    gaps = [
+        s["skill"] for s in gap_analysis["skills"]
+        if s["status"] in ("missing", "partial")
+    ]
+
+    if not gaps:
+        return []
+
+    if not selected_entries:
+        return []
+
+    entries_context = _format_entries_for_prompt(selected_entries)
+    skills_text = _format_skills_for_prompt(skills_data)
+
+    prompt = f"""
+    You are a careful, conservative resume analyst. For each skill gap listed below,
+    examine ONLY the candidate's experience provided. Determine if this is a
+    GENUINE GAP (no related experience exists at all) or a PHRASING GAP
+    (the experience clearly demonstrates this skill or a very close equivalent,
+    but it is not explicitly named or surfaced).
+
+    CRITICAL RULES:
+    - Be conservative. If uncertain, default to GENUINE GAP and suggest nothing.
+    - Never invent or imply experience that is not clearly present in the provided text.
+    - Only flag a PHRASING GAP if the connection is obvious and defensible in an interview.
+    - For phrasing gaps, suggest EITHER adding a skill to the registry (if clearly true)
+    OR rewording one existing bullet to surface the skill (not both, pick the better fix).
+    - Reworded bullets must stay factually identical — only phrasing changes.
+
+    Candidate's current skills registry:
+    {skills_text}
+
+    Candidate's selected experience for this job:
+    {entries_context}
+
+    Skill gaps to evaluate:
+    {', '.join(gaps)}
+
+    Return ONLY a JSON array, no markdown, no explanation. Format:
+    [
+        {{
+            "skill": "Relational Databases",
+            "verdict": "phrasing_gap",
+            "reasoning": "Candidate designed MongoDB schemas with aggregation pipelines, showing strong database design skills, but no relational DB is explicitly mentioned.",
+            "fix_type": "add_skill",
+            "target_entry": null,
+            "suggested_skill": null,
+            "original_bullet": null,
+            "suggested_bullet": null
+        }},
+        {{
+            "skill": "Ruby",
+            "verdict": "genuine_gap",
+            "reasoning": "No experience with Ruby or Ruby on Rails appears anywhere in the provided experience.",
+            "fix_type": "none",
+            "target_entry": null,
+            "suggested_skill": null,
+            "original_bullet": null,
+            "suggested_bullet": null
+        }}
+    ]
+    """
+    raw = _call_gemini(prompt)
+    try:
+        clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        suggestions = json.loads(clean)
+        return suggestions
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Gemini returned invalid JSON for gap suggestions: {e}\\nRaw: {raw}")
+
+
 def run_analysis(jd_text: str, profile: Profile) -> dict:
     """Run the full analysis flow for a job description.
 

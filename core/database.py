@@ -275,3 +275,32 @@ def clear_all() -> None:
     global _collection
     _client.delete_collection(COLLECTION_NAME)
     _collection = _client.get_or_create_collection(COLLECTION_NAME)
+
+
+def update_bullet(entry_name: str, original_bullet: str, new_bullet: str) -> bool:
+    """Find an entry by name, replace one specific bullet, re-embed and save."""
+    all_entries = get_all_entries()
+    target = None
+    for e in all_entries:
+        if e["name"] == entry_name and original_bullet in e["bullets"]:
+            target = e
+            break
+
+    if not target:
+        return False
+
+    new_bullets = [
+        new_bullet if b == original_bullet else b
+        for b in target["bullets"]
+    ]
+
+    update_entry(
+        entry_id=target["id"],
+        entry_type=target["type"],
+        name=target["name"],
+        bullets=new_bullets,
+        stack=target.get("stack", ""),
+        role=target.get("role", ""),
+        description=target.get("description", ""),
+    )
+    return True

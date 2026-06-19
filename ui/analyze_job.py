@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QPalette, QColor
 from core.generator import (
     extract_skills, analyze_gaps, search_entries,
     generate_documents, suggest_gap_fixes,
@@ -20,7 +21,7 @@ class SearchWorker(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, jd_text: str, profile, skills: dict = None):
+    def __init__(self, jd_text, profile, skills=None):
         super().__init__()
         self.jd_text = jd_text
         self.profile = profile
@@ -50,7 +51,7 @@ class GenerateWorker(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, jd_text: str, profile, selected_entries: list, accepted_rewrites: dict):
+    def __init__(self, jd_text, profile, selected_entries, accepted_rewrites):
         super().__init__()
         self.jd_text = jd_text
         self.profile = profile
@@ -78,7 +79,7 @@ class GapFixWorker(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, gap_analysis: dict, selected_entries: list, skills_data: dict):
+    def __init__(self, gap_analysis, selected_entries, skills_data):
         super().__init__()
         self.gap_analysis = gap_analysis
         self.selected_entries = selected_entries
@@ -86,14 +87,16 @@ class GapFixWorker(QThread):
 
     def run(self):
         try:
-            suggestions = suggest_gap_fixes(self.gap_analysis, self.selected_entries, self.skills_data)
+            suggestions = suggest_gap_fixes(
+                self.gap_analysis, self.selected_entries, self.skills_data
+            )
             self.finished.emit(suggestions)
         except Exception as e:
             self.error.emit(str(e))
 
 
 class SkillRow(QWidget):
-    def __init__(self, skill: str, status: str, confidence: int, skill_type: str):
+    def __init__(self, skill, status, confidence, skill_type):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 4)
@@ -136,7 +139,7 @@ class SkillRow(QWidget):
 
 
 class EntryCheckbox(QFrame):
-    def __init__(self, entry: dict, checked: bool = None):
+    def __init__(self, entry, checked=None):
         super().__init__()
         self.entry = entry
         self.setObjectName("card")
@@ -170,7 +173,6 @@ class EntryCheckbox(QFrame):
         score = QLabel(f"Score: {round(entry.get('score', 0) * 100)}%")
         score.setStyleSheet("font-size: 10px; color: #6C757D;")
         name_row.addWidget(score)
-
         info.addLayout(name_row)
 
         if entry.get("stack"):
@@ -179,12 +181,12 @@ class EntryCheckbox(QFrame):
             stack.setWordWrap(True)
             info.addWidget(stack)
 
-        type_badge = QLabel(entry["type"].upper())
         colors = {
             "project":   "background-color: #EEF1FD; color: #4361EE;",
             "job":       "background-color: #E8F5E9; color: #2E7D32;",
             "softskill": "background-color: #FCE4EC; color: #C62828;",
         }
+        type_badge = QLabel(entry["type"].upper())
         type_badge.setStyleSheet(
             f"{colors.get(entry['type'], '')} border-radius: 4px;"
             "padding: 2px 6px; font-size: 10px; font-weight: 700;"
@@ -192,124 +194,187 @@ class EntryCheckbox(QFrame):
         info.addWidget(type_badge)
         layout.addLayout(info, stretch=1)
 
-    def is_checked(self) -> bool:
+    def is_checked(self):
         return self.checkbox.isChecked()
 
 
-class SuggestionCard(QFrame):
+class SuggestionCard(QWidget):
     STATUS_COLORS = {
         "pending":  "#4361EE",
         "accepted": "#2E7D32",
         "declined": "#E63946",
     }
+    STATUS_BG = {
+        "pending":  "#F0F3FF",
+        "accepted": "#F0FAF0",
+        "declined": "#FFF0F0",
+    }
 
-    def __init__(self, suggestion: dict, on_accept, on_decline, on_status_change):
+    def __init__(self, suggestion, on_accept, on_decline, on_status_change):
         super().__init__()
         self.suggestion = suggestion
         self.on_accept = on_accept
         self.on_decline = on_decline
         self.on_status_change = on_status_change
-        self._apply_border()
         self._build_ui()
 
-    def _apply_border(self):
-        status = self.suggestion.get("status", "pending")
-        color = self.STATUS_COLORS.get(status, "#4361EE")
-        self.setStyleSheet(
-            f"QFrame {{ background-color: #FFFFFF; border: 2px solid {color};"
-            "border-radius: 12px; }}"
-        )
-
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        status = self.suggestion.get("status", "pending")
+        border_color = self.STATUS_COLORS.get(status, "#4361EE")
+        bg_color = self.STATUS_BG.get(status, "#F0F3FF")
 
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 4)
+        outer.setSpacing(0)
+
+        # Colored left strip
+        strip = QFrame()
+        strip.setFixedWidth(5)
+        strip.setStyleSheet(f"QFrame {{ background-color: {border_color}; border: none; }}")
+        outer.addWidget(strip)
+
+        # Card body
+        body = QWidget()
+        body.setStyleSheet(f"QWidget {{ background-color: {bg_color}; border: none; }}")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(14, 12, 14, 12)
+        body_layout.setSpacing(8)
+
+        # Header
         header = QHBoxLayout()
+
         skill_label = QLabel(self.suggestion["skill"])
-        skill_label.setStyleSheet("font-weight: 700; font-size: 13px; color: #1A1A2E;")
+        skill_label.setStyleSheet(
+            "font-weight: 700; font-size: 13px; color: #1A1A2E;"
+            "background: transparent; border: none;"
+        )
         header.addWidget(skill_label)
 
         verdict = self.suggestion.get("verdict", "genuine_gap")
-        if verdict == "phrasing_gap":
-            badge = QLabel("Fillable")
-            badge.setStyleSheet(
-                "background-color: #E8F5E9; color: #2E7D32; border-radius: 4px;"
-                "padding: 2px 8px; font-size: 10px; font-weight: 700;"
-            )
-        else:
-            badge = QLabel("Genuine Gap")
-            badge.setStyleSheet(
-                "background-color: #FCE4EC; color: #C62828; border-radius: 4px;"
-                "padding: 2px 8px; font-size: 10px; font-weight: 700;"
-            )
-        header.addWidget(badge)
+        verdict_badge = QLabel("Fillable" if verdict == "phrasing_gap" else "Genuine Gap")
+        verdict_color = "#1A5C1A" if verdict == "phrasing_gap" else "#8B0000"
+        verdict_bg = "#C8EFC8" if verdict == "phrasing_gap" else "#FCCACA"
+        verdict_badge.setStyleSheet(
+            f"background-color: {verdict_bg}; color: {verdict_color}; border-radius: 4px;"
+            "padding: 2px 8px; font-size: 10px; font-weight: 700; border: none;"
+        )
+        header.addWidget(verdict_badge)
 
-        status = self.suggestion.get("status", "pending")
-        status_label = QLabel(status.capitalize())
-        status_color = self.STATUS_COLORS.get(status, "#4361EE")
-        status_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 700;")
-        header.addWidget(status_label)
+        status_lbl = QLabel(status.capitalize())
+        status_lbl.setStyleSheet(
+            f"color: {border_color}; font-size: 10px; font-weight: 700;"
+            "padding: 2px 6px; background: transparent; border: none;"
+        )
+        header.addWidget(status_lbl)
         header.addStretch()
-        layout.addLayout(header)
+        body_layout.addLayout(header)
 
+        # Reasoning
         reasoning = QLabel(self.suggestion.get("reasoning", ""))
         reasoning.setWordWrap(True)
-        reasoning.setStyleSheet("font-size: 12px; color: #6C757D;")
-        layout.addWidget(reasoning)
+        reasoning.setStyleSheet(
+            "font-size: 12px; color: #444; background: transparent; border: none;"
+        )
+        body_layout.addWidget(reasoning)
 
         if verdict == "phrasing_gap":
             fix_type = self.suggestion.get("fix_type")
 
             if fix_type == "add_skill" and self.suggestion.get("suggested_skill"):
-                cat = self.suggestion.get("suggested_category", "General")
-                fix_label = QLabel(
-                    f'Suggested: Add "{self.suggestion["suggested_skill"]}" → category "{cat}"'
+                cat = self.suggestion.get("suggested_category") or "General"
+                fix_lbl = QLabel(
+                    f'Add "{self.suggestion["suggested_skill"]}" → category "{cat}"'
                 )
-                fix_label.setWordWrap(True)
-                fix_label.setStyleSheet("font-size: 12px; color: #1A1A2E; font-weight: 600;")
-                layout.addWidget(fix_label)
+                fix_lbl.setWordWrap(True)
+                fix_lbl.setStyleSheet(
+                    "font-size: 12px; color: #1A1A2E; font-weight: 600;"
+                    "background-color: #FFFFFF; border-radius: 4px;"
+                    "padding: 6px; border: 1px solid #DEE2E6;"
+                )
+                body_layout.addWidget(fix_lbl)
 
             elif fix_type == "reword_bullet" and self.suggestion.get("suggested_bullet"):
-                orig = QLabel(f"Original:  {self.suggestion.get('original_bullet', '')}")
-                orig.setWordWrap(True)
-                orig.setStyleSheet("font-size: 11px; color: #6C757D;")
-                layout.addWidget(orig)
+                orig_lbl = QLabel(f"Before: {self.suggestion.get('original_bullet', '')}")
+                orig_lbl.setWordWrap(True)
+                orig_lbl.setStyleSheet(
+                    "font-size: 11px; color: #666; background-color: #FFF5F5;"
+                    "border-radius: 4px; padding: 6px; border: 1px solid #FFCCCC;"
+                )
+                body_layout.addWidget(orig_lbl)
 
-                suggested = QLabel(f"Suggested: {self.suggestion['suggested_bullet']}")
-                suggested.setWordWrap(True)
-                suggested.setStyleSheet("font-size: 12px; color: #1A1A2E; font-weight: 600;")
-                layout.addWidget(suggested)
+                sug_lbl = QLabel(f"After: {self.suggestion['suggested_bullet']}")
+                sug_lbl.setWordWrap(True)
+                sug_lbl.setStyleSheet(
+                    "font-size: 12px; color: #1A1A2E; font-weight: 600;"
+                    "background-color: #F0FAF0; border-radius: 4px;"
+                    "padding: 6px; border: 1px solid #AADDAA;"
+                )
+                body_layout.addWidget(sug_lbl)
 
             note = QLabel(
-                "Note: accepting a reword applies it only to this job's resume — "
-                "your stored experience is not changed."
+                "Accepting a reword applies only to this job's resume — "
+                "your stored experience is unchanged."
             )
             note.setWordWrap(True)
-            note.setStyleSheet("font-size: 10px; color: #6C757D; font-style: italic;")
-            layout.addWidget(note)
+            note.setStyleSheet(
+                "font-size: 10px; color: #888; font-style: italic;"
+                "background: transparent; border: none;"
+            )
+            body_layout.addWidget(note)
 
             if status == "pending":
                 btn_row = QHBoxLayout()
+
                 accept_btn = QPushButton("This is true, apply it")
                 accept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                accept_btn.setStyleSheet(
+                    "QPushButton { background-color: #4361EE; color: #FFFFFF; border: none;"
+                    "border-radius: 8px; padding: 8px 18px; font-size: 13px;"
+                    "font-weight: 600; min-height: 36px; }"
+                    "QPushButton:hover { background-color: #3A56D4; }"
+                )
                 accept_btn.clicked.connect(self._on_accept_clicked)
                 btn_row.addWidget(accept_btn)
 
                 decline_btn = QPushButton("Not applicable")
-                decline_btn.setObjectName("secondary")
                 decline_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                decline_btn.setStyleSheet(
+                    "QPushButton { background-color: #FFFFFF; color: #4361EE;"
+                    "border: 1.5px solid #4361EE; border-radius: 8px; padding: 8px 18px;"
+                    "font-size: 13px; font-weight: 600; min-height: 36px; }"
+                    "QPushButton:hover { background-color: #EEF1FD; }"
+                )
                 decline_btn.clicked.connect(self._on_decline_clicked)
                 btn_row.addWidget(decline_btn)
 
-                layout.addLayout(btn_row)
+                body_layout.addLayout(btn_row)
             else:
                 undo_btn = QPushButton("Undo")
-                undo_btn.setObjectName("secondary")
                 undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                undo_btn.setStyleSheet(
+                    "QPushButton { background-color: #FFFFFF; color: #4361EE;"
+                    "border: 1.5px solid #4361EE; border-radius: 8px; padding: 6px 16px;"
+                    "font-size: 12px; font-weight: 600; min-height: 32px; }"
+                    "QPushButton:hover { background-color: #EEF1FD; }"
+                )
                 undo_btn.clicked.connect(self._on_undo_clicked)
-                layout.addWidget(undo_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+                body_layout.addWidget(undo_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
+        outer.addWidget(body, stretch=1)
+
+    def _on_accept_clicked(self):
+        self.suggestion["status"] = "accepted"
+        self.on_accept(self.suggestion)
+        self.on_status_change()
+
+    def _on_decline_clicked(self):
+        self.suggestion["status"] = "declined"
+        self.on_decline(self.suggestion)
+        self.on_status_change()
+
+    def _on_undo_clicked(self):
+        self.suggestion["status"] = "pending"
+        self.on_status_change()
     def _on_accept_clicked(self):
         self.suggestion["status"] = "accepted"
         self.on_accept(self.suggestion)
@@ -342,6 +407,9 @@ class AnalyzeJobScreen(QWidget):
         self.gap_fix_worker = None
         self.gap_suggestions_container = None
         self.check_gaps_btn = None
+        # Live score display references for update-in-place
+        self._score_label_ref = None
+        self._score_bar_ref = None
         self._build_ui()
 
     def _build_ui(self):
@@ -431,12 +499,12 @@ class AnalyzeJobScreen(QWidget):
         right_scroll.setWidget(self.right)
         outer.addWidget(right_scroll, stretch=1)
 
-    def _label(self, text: str) -> QLabel:
+    def _label(self, text):
         lbl = QLabel(text)
         lbl.setStyleSheet("font-weight: 600; color: #1A1A2E;")
         return lbl
 
-    def _set_loading(self, loading: bool, text: str = ""):
+    def _set_loading(self, loading, text=""):
         self.analyse_btn.setEnabled(not loading)
         self.reextract_btn.setEnabled(not loading)
         self.status_label.setText(text)
@@ -489,14 +557,14 @@ class AnalyzeJobScreen(QWidget):
             return
         self.gap_suggestions = []
         self.accepted_rewrites = {}
-        self._set_loading(True, "Re-extracting skills from job description...")
+        self._set_loading(True, "Re-extracting skills...")
         self.search_worker = SearchWorker(self.jd_text, profile, skills=None)
         self.search_worker.finished.connect(self._on_search_done)
         self.search_worker.error.connect(self._on_error)
         self.search_worker.status.connect(self.status_label.setText)
         self.search_worker.start()
 
-    def _on_search_done(self, skills: dict, gap_analysis: dict, search_results: dict):
+    def _on_search_done(self, skills, gap_analysis, search_results):
         self.skills = skills
         self.gap_analysis = gap_analysis
         self.search_results = search_results
@@ -505,7 +573,7 @@ class AnalyzeJobScreen(QWidget):
         self.reextract_btn.show()
         self._render_results(gap_analysis, search_results, selected_ids=None)
 
-    def _on_error(self, error: str):
+    def _on_error(self, error):
         self.analyse_btn.setText("Analyse →")
         self._set_loading(False)
         QMessageBox.critical(self, "Error", f"Something went wrong:\n\n{error}")
@@ -514,36 +582,43 @@ class AnalyzeJobScreen(QWidget):
         self.entry_checkboxes = []
         self.gap_suggestions_container = None
         self.check_gaps_btn = None
+        self._score_label_ref = None
+        self._score_bar_ref = None
         while self.right_layout.count():
             item = self.right_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-    def _render_results(self, gap_analysis: dict, search_results: dict, selected_ids=None):
+    def _render_results(self, gap_analysis, search_results, selected_ids=None):
         self._clear_results()
 
-        # Overall Score
+        # ── Overall Score ──
         score_card = QFrame()
         score_card.setObjectName("card")
         sc_l = QVBoxLayout(score_card)
         sc_l.setContentsMargins(24, 20, 24, 20)
         sc_l.setSpacing(4)
+
         sc_title = QLabel("Overall Match")
         sc_title.setObjectName("section_label")
         sc_l.addWidget(sc_title)
+
         score = gap_analysis["overall_match"]
         color = "#2E7D32" if score >= 70 else "#F57F17" if score >= 40 else "#E63946"
-        score_label = QLabel(f"{score}%")
-        score_label.setStyleSheet(f"font-size: 48px; font-weight: 700; color: {color};")
-        sc_l.addWidget(score_label)
-        score_bar = QProgressBar()
-        score_bar.setValue(score)
-        score_bar.setFixedHeight(10)
-        score_bar.setTextVisible(False)
-        sc_l.addWidget(score_bar)
+        self._score_label_ref = QLabel(f"{score}%")
+        self._score_label_ref.setStyleSheet(
+            f"font-size: 48px; font-weight: 700; color: {color};"
+        )
+        sc_l.addWidget(self._score_label_ref)
+
+        self._score_bar_ref = QProgressBar()
+        self._score_bar_ref.setValue(score)
+        self._score_bar_ref.setFixedHeight(10)
+        self._score_bar_ref.setTextVisible(False)
+        sc_l.addWidget(self._score_bar_ref)
         self.right_layout.addWidget(score_card)
 
-        # Skill Breakdown
+        # ── Skill Breakdown ──
         sk_card = QFrame()
         sk_card.setObjectName("card")
         sk_l = QVBoxLayout(sk_card)
@@ -554,10 +629,12 @@ class AnalyzeJobScreen(QWidget):
         sk_l.addWidget(sk_title)
         sk_l.addSpacing(8)
         for sd in gap_analysis["skills"]:
-            sk_l.addWidget(SkillRow(sd["skill"], sd["status"], sd["confidence"], sd["type"]))
+            sk_l.addWidget(
+                SkillRow(sd["skill"], sd["status"], sd["confidence"], sd["type"])
+            )
         self.right_layout.addWidget(sk_card)
 
-        # Missing Skills + gap fix
+        # ── Missing Skills + gap checker ──
         if gap_analysis["missing_skills"]:
             miss_card = QFrame()
             miss_card.setObjectName("card")
@@ -590,12 +667,13 @@ class AnalyzeJobScreen(QWidget):
             self.gap_suggestions_container.setSpacing(8)
             miss_l.addLayout(self.gap_suggestions_container)
 
+            # Restore saved suggestions immediately after container is set
             if self.gap_suggestions:
                 self._render_suggestion_cards()
 
             self.right_layout.addWidget(miss_card)
 
-        # Entry selector
+        # ── Entry Selector ──
         sel_card = QFrame()
         sel_card.setObjectName("card")
         sel_l = QVBoxLayout(sel_card)
@@ -607,6 +685,7 @@ class AnalyzeJobScreen(QWidget):
         sel_title.setObjectName("section_label")
         sel_header.addWidget(sel_title)
         sel_header.addStretch()
+
         research_btn = QPushButton("Re-search")
         research_btn.setObjectName("secondary")
         research_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -629,7 +708,7 @@ class AnalyzeJobScreen(QWidget):
 
         self.right_layout.addWidget(sel_card)
 
-        # Action buttons
+        # ── Action Buttons ──
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
 
@@ -653,7 +732,7 @@ class AnalyzeJobScreen(QWidget):
 
         self.right_layout.addStretch()
 
-    def _render_docs(self, docs: dict):
+    def _render_docs(self, docs):
         docs_card = QFrame()
         docs_card.setObjectName("card")
         dl = QVBoxLayout(docs_card)
@@ -742,7 +821,7 @@ class AnalyzeJobScreen(QWidget):
         self.generate_worker.status.connect(self.status_label.setText)
         self.generate_worker.start()
 
-    def _on_generate_done(self, docs: dict):
+    def _on_generate_done(self, docs):
         self.docs = docs
         self.generate_btn.setEnabled(True)
         self.generate_btn.setText("Generate Resume & Cover Letter →")
@@ -793,12 +872,13 @@ class AnalyzeJobScreen(QWidget):
         self._open_output_folder()
         QMessageBox.information(self, "Done!", f"Files saved to:\n\n{resume_path}\n{cover_path}")
 
-    def _on_generate_error(self, error: str):
+    def _on_generate_error(self, error):
         self.generate_btn.setEnabled(True)
         self.generate_btn.setText("Generate Resume & Cover Letter →")
         self.status_label.setText("")
         QMessageBox.critical(self, "Generation Failed", f"Something went wrong:\n\n{error}")
 
+    # ── Gap fix suggestions ──
     def _run_gap_check(self):
         selected = [cb.entry for cb in self.entry_checkboxes if cb.is_checked()]
         if not selected:
@@ -812,7 +892,7 @@ class AnalyzeJobScreen(QWidget):
         self.gap_fix_worker.error.connect(self._on_gap_check_error)
         self.gap_fix_worker.start()
 
-    def _on_gap_check_done(self, suggestions: list):
+    def _on_gap_check_done(self, suggestions):
         self.check_gaps_btn.setEnabled(True)
         self.check_gaps_btn.setText("Check for Fillable Gaps")
         self.status_label.setText("")
@@ -821,7 +901,7 @@ class AnalyzeJobScreen(QWidget):
             save_suggestions(self.analysis_id, self.gap_suggestions)
         self._render_suggestion_cards()
 
-    def _on_gap_check_error(self, error: str):
+    def _on_gap_check_error(self, error):
         self.check_gaps_btn.setEnabled(True)
         self.check_gaps_btn.setText("Check for Fillable Gaps")
         self.status_label.setText("")
@@ -854,11 +934,33 @@ class AnalyzeJobScreen(QWidget):
             self.gap_suggestions_container.addWidget(card)
 
     def _on_suggestion_status_changed(self):
+        """Re-render cards and persist. Also update score if a skill was added."""
         self._render_suggestion_cards()
         if self.analysis_id:
             save_suggestions(self.analysis_id, self.gap_suggestions)
+        self._refresh_score()
 
-    def _accept_suggestion(self, suggestion: dict):
+    def _refresh_score(self):
+        """
+        Recompute gap analysis against current skills.json (no API call)
+        and update the score label + bar in place.
+        """
+        if not self.skills or self._score_label_ref is None:
+            return
+
+        skills_data = load_skills()
+        updated_gap = analyze_gaps(self.skills, skills_data)
+        self.gap_analysis = updated_gap
+
+        score = updated_gap["overall_match"]
+        color = "#2E7D32" if score >= 70 else "#F57F17" if score >= 40 else "#E63946"
+        self._score_label_ref.setText(f"{score}%")
+        self._score_label_ref.setStyleSheet(
+            f"font-size: 48px; font-weight: 700; color: {color};"
+        )
+        self._score_bar_ref.setValue(score)
+
+    def _accept_suggestion(self, suggestion):
         fix_type = suggestion.get("fix_type")
         if fix_type == "add_skill" and suggestion.get("suggested_skill"):
             skill_name = suggestion["suggested_skill"]
@@ -873,10 +975,10 @@ class AnalyzeJobScreen(QWidget):
             if original and reworded:
                 self.accepted_rewrites[original] = reworded
 
-    def _decline_suggestion(self, suggestion: dict):
+    def _decline_suggestion(self, suggestion):
         pass
 
-    def load_record(self, record: dict):
+    def load_record(self, record):
         self.analysis_id = record["id"]
         self.jd_text = record["jd_text"]
         self.skills = record["skills"]

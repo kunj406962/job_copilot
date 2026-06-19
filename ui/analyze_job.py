@@ -5,14 +5,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.generator import (
-    extract_skills, analyze_gaps, search_entries, generate_documents,
-    suggest_gap_fixes,
+    extract_skills, analyze_gaps, search_entries,
+    generate_documents, suggest_gap_fixes,
 )
 from core.docx_builder import build_resume, build_cover_letter
-from core.history import save_progress, save_docs
+from core.history import save_progress, save_docs, save_suggestions
 from core.profile import Profile
-from core.skills import load_skills, add_skill
-from core.database import update_bullet
+from core.skills import load_skills, add_skill, add_category
 import os
 
 
@@ -21,30 +20,25 @@ class SearchWorker(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, jd_text: str, profile: Profile, skills: dict = None):
+    def __init__(self, jd_text: str, profile, skills: dict = None):
         super().__init__()
         self.jd_text = jd_text
         self.profile = profile
-        self.skills = skills  # if provided, skip extraction
+        self.skills = skills
 
     def run(self):
         try:
             import core.embeddings as emb
             emb._status_callback = lambda msg: self.status.emit(msg)
-
             skills_data = load_skills()
-
             if self.skills is None:
                 self.status.emit("Extracting skills from job description...")
                 skills = extract_skills(self.jd_text)
             else:
                 skills = self.skills
-
             gap_analysis = analyze_gaps(skills, skills_data)
-
             self.status.emit("Searching your experience...")
             search_results = search_entries(self.jd_text, skills)
-
             emb._status_callback = None
             self.finished.emit(skills, gap_analysis, search_results)
         except Exception as e:
@@ -56,11 +50,12 @@ class GenerateWorker(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, jd_text: str, profile: Profile, selected_entries: list):
+    def __init__(self, jd_text: str, profile, selected_entries: list, accepted_rewrites: dict):
         super().__init__()
         self.jd_text = jd_text
         self.profile = profile
         self.selected_entries = selected_entries
+        self.accepted_rewrites = accepted_rewrites
 
     def run(self):
         try:
@@ -70,7 +65,8 @@ class GenerateWorker(QThread):
             self.status.emit("Generating resume content...")
             docs = generate_documents(
                 self.jd_text, self.profile,
-                self.selected_entries, skills_data
+                self.selected_entries, skills_data,
+                accepted_rewrites=self.accepted_rewrites,
             )
             emb._status_callback = None
             self.finished.emit(docs)
@@ -201,13 +197,28 @@ class EntryCheckbox(QFrame):
 
 
 class SuggestionCard(QFrame):
-    def __init__(self, suggestion: dict, on_accept, on_reject):
+    STATUS_COLORS = {
+        "pending":  "#4361EE",
+        "accepted": "#2E7D32",
+        "declined": "#E63946",
+    }
+
+    def __init__(self, suggestion: dict, on_accept, on_decline, on_status_change):
         super().__init__()
         self.suggestion = suggestion
         self.on_accept = on_accept
-        self.on_reject = on_reject
-        self.setObjectName("card")
+        self.on_decline = on_decline
+        self.on_status_change = on_status_change
+        self._apply_border()
         self._build_ui()
+
+    def _apply_border(self):
+        status = self.suggestion.get("status", "pending")
+        color = self.STATUS_COLORS.get(status, "#4361EE")
+        self.setStyleSheet(
+            f"QFrame {{ background-color: #FFFFFF; border: 2px solid {color};"
+            "border-radius: 12px; }}"
+        )
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -233,6 +244,12 @@ class SuggestionCard(QFrame):
                 "padding: 2px 8px; font-size: 10px; font-weight: 700;"
             )
         header.addWidget(badge)
+
+        status = self.suggestion.get("status", "pending")
+        status_label = QLabel(status.capitalize())
+        status_color = self.STATUS_COLORS.get(status, "#4361EE")
+        status_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 700;")
+        header.addWidget(status_label)
         header.addStretch()
         layout.addLayout(header)
 
@@ -245,13 +262,16 @@ class SuggestionCard(QFrame):
             fix_type = self.suggestion.get("fix_type")
 
             if fix_type == "add_skill" and self.suggestion.get("suggested_skill"):
-                fix_label = QLabel(f'Suggested fix: Add "{self.suggestion["suggested_skill"]}" to your Skills')
+                cat = self.suggestion.get("suggested_category", "General")
+                fix_label = QLabel(
+                    f'Suggested: Add "{self.suggestion["suggested_skill"]}" → category "{cat}"'
+                )
                 fix_label.setWordWrap(True)
                 fix_label.setStyleSheet("font-size: 12px; color: #1A1A2E; font-weight: 600;")
                 layout.addWidget(fix_label)
 
             elif fix_type == "reword_bullet" and self.suggestion.get("suggested_bullet"):
-                orig = QLabel(f"Original: {self.suggestion.get('original_bullet', '')}")
+                orig = QLabel(f"Original:  {self.suggestion.get('original_bullet', '')}")
                 orig.setWordWrap(True)
                 orig.setStyleSheet("font-size: 11px; color: #6C757D;")
                 layout.addWidget(orig)
@@ -261,25 +281,48 @@ class SuggestionCard(QFrame):
                 suggested.setStyleSheet("font-size: 12px; color: #1A1A2E; font-weight: 600;")
                 layout.addWidget(suggested)
 
-            btn_row = QHBoxLayout()
-            accept_btn = QPushButton("This is true, apply it")
-            accept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            accept_btn.clicked.connect(self._on_accept_clicked)
-            btn_row.addWidget(accept_btn)
+            note = QLabel(
+                "Note: accepting a reword applies it only to this job's resume — "
+                "your stored experience is not changed."
+            )
+            note.setWordWrap(True)
+            note.setStyleSheet("font-size: 10px; color: #6C757D; font-style: italic;")
+            layout.addWidget(note)
 
-            reject_btn = QPushButton("Not applicable")
-            reject_btn.setObjectName("secondary")
-            reject_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            reject_btn.clicked.connect(self._on_reject_clicked)
-            btn_row.addWidget(reject_btn)
+            if status == "pending":
+                btn_row = QHBoxLayout()
+                accept_btn = QPushButton("This is true, apply it")
+                accept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                accept_btn.clicked.connect(self._on_accept_clicked)
+                btn_row.addWidget(accept_btn)
 
-            layout.addLayout(btn_row)
+                decline_btn = QPushButton("Not applicable")
+                decline_btn.setObjectName("secondary")
+                decline_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                decline_btn.clicked.connect(self._on_decline_clicked)
+                btn_row.addWidget(decline_btn)
+
+                layout.addLayout(btn_row)
+            else:
+                undo_btn = QPushButton("Undo")
+                undo_btn.setObjectName("secondary")
+                undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                undo_btn.clicked.connect(self._on_undo_clicked)
+                layout.addWidget(undo_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
     def _on_accept_clicked(self):
+        self.suggestion["status"] = "accepted"
         self.on_accept(self.suggestion)
+        self.on_status_change()
 
-    def _on_reject_clicked(self):
-        self.on_reject(self.suggestion)
+    def _on_decline_clicked(self):
+        self.suggestion["status"] = "declined"
+        self.on_decline(self.suggestion)
+        self.on_status_change()
+
+    def _on_undo_clicked(self):
+        self.suggestion["status"] = "pending"
+        self.on_status_change()
 
 
 class AnalyzeJobScreen(QWidget):
@@ -292,6 +335,8 @@ class AnalyzeJobScreen(QWidget):
         self.jd_text = ""
         self.analysis_id = None
         self.entry_checkboxes = []
+        self.gap_suggestions = []
+        self.accepted_rewrites = {}
         self.search_worker = None
         self.generate_worker = None
         self.gap_fix_worker = None
@@ -304,7 +349,6 @@ class AnalyzeJobScreen(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Left Panel ──
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -315,9 +359,9 @@ class AnalyzeJobScreen(QWidget):
         left_layout.setContentsMargins(32, 32, 32, 32)
         left_layout.setSpacing(8)
 
-        self.title = QLabel("Analyze Job")
-        self.title.setObjectName("title")
-        left_layout.addWidget(self.title)
+        self.title_label = QLabel("Analyze Job")
+        self.title_label.setObjectName("title")
+        left_layout.addWidget(self.title_label)
 
         subtitle = QLabel("Paste a job description to get your match score and tailored resume.")
         subtitle.setObjectName("subtitle")
@@ -347,7 +391,6 @@ class AnalyzeJobScreen(QWidget):
         self.analyse_btn.clicked.connect(self._run_search)
         left_layout.addWidget(self.analyse_btn)
 
-        # Re-extract skills — only meaningful after a search has happened
         self.reextract_btn = QPushButton("Re-extract Skills from JD")
         self.reextract_btn.setObjectName("secondary")
         self.reextract_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -365,13 +408,11 @@ class AnalyzeJobScreen(QWidget):
         left_scroll.setWidget(left)
         outer.addWidget(left_scroll)
 
-        # ── Divider ──
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.VLine)
         divider.setStyleSheet("color: #DEE2E6;")
         outer.addWidget(divider)
 
-        # ── Right Panel ──
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -381,84 +422,74 @@ class AnalyzeJobScreen(QWidget):
         self.right_layout.setContentsMargins(32, 32, 32, 32)
         self.right_layout.setSpacing(16)
 
-        self.placeholder = QLabel("Run an analysis to see your results here.")
-        self.placeholder.setObjectName("subtitle")
-        self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.right_layout.addWidget(self.placeholder)
+        placeholder = QLabel("Run an analysis to see your results here.")
+        placeholder.setObjectName("subtitle")
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.right_layout.addWidget(placeholder)
         self.right_layout.addStretch()
 
         right_scroll.setWidget(self.right)
         outer.addWidget(right_scroll, stretch=1)
 
     def _label(self, text: str) -> QLabel:
-        label = QLabel(text)
-        label.setStyleSheet("font-weight: 600; color: #1A1A2E;")
-        return label
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-weight: 600; color: #1A1A2E;")
+        return lbl
 
     def _set_loading(self, loading: bool, text: str = ""):
         self.analyse_btn.setEnabled(not loading)
         self.reextract_btn.setEnabled(not loading)
         self.status_label.setText(text)
 
-    # ── Fresh analysis ──
     def _run_search(self):
         self.jd_text = self.jd_input.toPlainText().strip()
         if not self.jd_text:
             QMessageBox.warning(self, "Missing Input", "Please paste a job description first.")
             return
-
         try:
             profile = Profile.load()
         except Exception as e:
             QMessageBox.critical(self, "Profile Error", str(e))
             return
-
+        self.gap_suggestions = []
+        self.accepted_rewrites = {}
         self.analyse_btn.setText("Analysing...")
         self._set_loading(True, "Extracting skills...")
         self._clear_results()
-
         self.search_worker = SearchWorker(self.jd_text, profile, skills=None)
         self.search_worker.finished.connect(self._on_search_done)
         self.search_worker.error.connect(self._on_error)
         self.search_worker.status.connect(self.status_label.setText)
         self.search_worker.start()
 
-    # ── Re-search using existing skills (no extraction call) ──
     def _run_research(self):
         self.jd_text = self.jd_input.toPlainText().strip()
         if not self.jd_text or not self.skills:
-            QMessageBox.warning(self, "Cannot Re-search", "Run an analysis first.")
             return
-
         try:
             profile = Profile.load()
         except Exception as e:
             QMessageBox.critical(self, "Profile Error", str(e))
             return
-
         self._set_loading(True, "Re-searching your experience...")
-
         self.search_worker = SearchWorker(self.jd_text, profile, skills=self.skills)
         self.search_worker.finished.connect(self._on_search_done)
         self.search_worker.error.connect(self._on_error)
         self.search_worker.status.connect(self.status_label.setText)
         self.search_worker.start()
 
-    # ── Re-extract skills (costs 1 Gemini call) — then re-search ──
     def _run_reextract(self):
         self.jd_text = self.jd_input.toPlainText().strip()
         if not self.jd_text:
-            QMessageBox.warning(self, "Missing Input", "Please paste a job description first.")
             return
-
         try:
             profile = Profile.load()
         except Exception as e:
             QMessageBox.critical(self, "Profile Error", str(e))
             return
-
+        self.gap_suggestions = []
+        self.accepted_rewrites = {}
         self._set_loading(True, "Re-extracting skills from job description...")
-
         self.search_worker = SearchWorker(self.jd_text, profile, skills=None)
         self.search_worker.finished.connect(self._on_search_done)
         self.search_worker.error.connect(self._on_error)
@@ -481,6 +512,8 @@ class AnalyzeJobScreen(QWidget):
 
     def _clear_results(self):
         self.entry_checkboxes = []
+        self.gap_suggestions_container = None
+        self.check_gaps_btn = None
         while self.right_layout.count():
             item = self.right_layout.takeAt(0)
             if item.widget():
@@ -489,72 +522,61 @@ class AnalyzeJobScreen(QWidget):
     def _render_results(self, gap_analysis: dict, search_results: dict, selected_ids=None):
         self._clear_results()
 
-        # ── Overall Score ──
+        # Overall Score
         score_card = QFrame()
         score_card.setObjectName("card")
-        score_layout = QVBoxLayout(score_card)
-        score_layout.setContentsMargins(24, 20, 24, 20)
-        score_layout.setSpacing(4)
-
-        score_title = QLabel("Overall Match")
-        score_title.setObjectName("section_label")
-        score_layout.addWidget(score_title)
-
+        sc_l = QVBoxLayout(score_card)
+        sc_l.setContentsMargins(24, 20, 24, 20)
+        sc_l.setSpacing(4)
+        sc_title = QLabel("Overall Match")
+        sc_title.setObjectName("section_label")
+        sc_l.addWidget(sc_title)
         score = gap_analysis["overall_match"]
         color = "#2E7D32" if score >= 70 else "#F57F17" if score >= 40 else "#E63946"
         score_label = QLabel(f"{score}%")
         score_label.setStyleSheet(f"font-size: 48px; font-weight: 700; color: {color};")
-        score_layout.addWidget(score_label)
-
+        sc_l.addWidget(score_label)
         score_bar = QProgressBar()
         score_bar.setValue(score)
         score_bar.setFixedHeight(10)
         score_bar.setTextVisible(False)
-        score_layout.addWidget(score_bar)
+        sc_l.addWidget(score_bar)
         self.right_layout.addWidget(score_card)
 
-        # ── Skill Breakdown ──
-        skills_card = QFrame()
-        skills_card.setObjectName("card")
-        skills_layout = QVBoxLayout(skills_card)
-        skills_layout.setContentsMargins(24, 20, 24, 20)
-        skills_layout.setSpacing(4)
+        # Skill Breakdown
+        sk_card = QFrame()
+        sk_card.setObjectName("card")
+        sk_l = QVBoxLayout(sk_card)
+        sk_l.setContentsMargins(24, 20, 24, 20)
+        sk_l.setSpacing(4)
+        sk_title = QLabel("Skill Breakdown")
+        sk_title.setObjectName("section_label")
+        sk_l.addWidget(sk_title)
+        sk_l.addSpacing(8)
+        for sd in gap_analysis["skills"]:
+            sk_l.addWidget(SkillRow(sd["skill"], sd["status"], sd["confidence"], sd["type"]))
+        self.right_layout.addWidget(sk_card)
 
-        skills_title = QLabel("Skill Breakdown")
-        skills_title.setObjectName("section_label")
-        skills_layout.addWidget(skills_title)
-        skills_layout.addSpacing(8)
-
-        for skill_data in gap_analysis["skills"]:
-            row = SkillRow(
-                skill=skill_data["skill"],
-                status=skill_data["status"],
-                confidence=skill_data["confidence"],
-                skill_type=skill_data["type"],
-            )
-            skills_layout.addWidget(row)
-        self.right_layout.addWidget(skills_card)
-
-        # ── Missing Skills + Gap Fix Checker ──
+        # Missing Skills + gap fix
         if gap_analysis["missing_skills"]:
-            missing_card = QFrame()
-            missing_card.setObjectName("card")
-            missing_layout = QVBoxLayout(missing_card)
-            missing_layout.setContentsMargins(24, 20, 24, 20)
-            missing_layout.setSpacing(8)
+            miss_card = QFrame()
+            miss_card.setObjectName("card")
+            miss_l = QVBoxLayout(miss_card)
+            miss_l.setContentsMargins(24, 20, 24, 20)
+            miss_l.setSpacing(8)
 
-            missing_header = QHBoxLayout()
-            missing_title = QLabel("Gaps to Address")
-            missing_title.setObjectName("section_label")
-            missing_header.addWidget(missing_title)
-            missing_header.addStretch()
+            miss_header = QHBoxLayout()
+            miss_title = QLabel("Gaps to Address")
+            miss_title.setObjectName("section_label")
+            miss_header.addWidget(miss_title)
+            miss_header.addStretch()
 
             self.check_gaps_btn = QPushButton("Check for Fillable Gaps")
             self.check_gaps_btn.setObjectName("secondary")
             self.check_gaps_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.check_gaps_btn.clicked.connect(self._run_gap_check)
-            missing_header.addWidget(self.check_gaps_btn)
-            missing_layout.addLayout(missing_header)
+            miss_header.addWidget(self.check_gaps_btn)
+            miss_l.addLayout(miss_header)
 
             for skill in gap_analysis["missing_skills"]:
                 pill = QLabel(f"  {skill}  ")
@@ -562,37 +584,39 @@ class AnalyzeJobScreen(QWidget):
                     "background-color: #FCE4EC; color: #C62828; border-radius: 6px;"
                     "padding: 4px 10px; font-size: 12px; font-weight: 600;"
                 )
-                missing_layout.addWidget(pill, alignment=Qt.AlignmentFlag.AlignLeft)
+                miss_l.addWidget(pill, alignment=Qt.AlignmentFlag.AlignLeft)
 
             self.gap_suggestions_container = QVBoxLayout()
             self.gap_suggestions_container.setSpacing(8)
-            missing_layout.addLayout(self.gap_suggestions_container)
+            miss_l.addLayout(self.gap_suggestions_container)
 
-            self.right_layout.addWidget(missing_card)
+            if self.gap_suggestions:
+                self._render_suggestion_cards()
 
-        # ── Project Selector ──
-        selector_card = QFrame()
-        selector_card.setObjectName("card")
-        selector_layout = QVBoxLayout(selector_card)
-        selector_layout.setContentsMargins(24, 20, 24, 20)
-        selector_layout.setSpacing(8)
+            self.right_layout.addWidget(miss_card)
 
-        selector_header = QHBoxLayout()
-        selector_title = QLabel("Select Experience to Include")
-        selector_title.setObjectName("section_label")
-        selector_header.addWidget(selector_title)
-        selector_header.addStretch()
+        # Entry selector
+        sel_card = QFrame()
+        sel_card.setObjectName("card")
+        sel_l = QVBoxLayout(sel_card)
+        sel_l.setContentsMargins(24, 20, 24, 20)
+        sel_l.setSpacing(8)
 
+        sel_header = QHBoxLayout()
+        sel_title = QLabel("Select Experience to Include")
+        sel_title.setObjectName("section_label")
+        sel_header.addWidget(sel_title)
+        sel_header.addStretch()
         research_btn = QPushButton("Re-search")
         research_btn.setObjectName("secondary")
         research_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         research_btn.clicked.connect(self._run_research)
-        selector_header.addWidget(research_btn)
-        selector_layout.addLayout(selector_header)
+        sel_header.addWidget(research_btn)
+        sel_l.addLayout(sel_header)
 
         hint = QLabel("AI picks are pre-checked. Check or uncheck to customise.")
         hint.setObjectName("subtitle")
-        selector_layout.addWidget(hint)
+        sel_l.addWidget(hint)
 
         self.entry_checkboxes = []
         for entry in search_results["ranked"]:
@@ -601,11 +625,11 @@ class AnalyzeJobScreen(QWidget):
                 checked = entry.get("id") in selected_ids
             cb = EntryCheckbox(entry, checked=checked)
             self.entry_checkboxes.append(cb)
-            selector_layout.addWidget(cb)
+            sel_l.addWidget(cb)
 
-        self.right_layout.addWidget(selector_card)
+        self.right_layout.addWidget(sel_card)
 
-        # ── Action Buttons ──
+        # Action buttons
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
 
@@ -624,7 +648,6 @@ class AnalyzeJobScreen(QWidget):
 
         self.right_layout.addLayout(action_row)
 
-        # ── Generated Docs (if any) ──
         if self.docs and any(self.docs.values()):
             self._render_docs(self.docs)
 
@@ -633,29 +656,29 @@ class AnalyzeJobScreen(QWidget):
     def _render_docs(self, docs: dict):
         docs_card = QFrame()
         docs_card.setObjectName("card")
-        docs_layout = QVBoxLayout(docs_card)
-        docs_layout.setContentsMargins(24, 20, 24, 20)
-        docs_layout.setSpacing(8)
+        dl = QVBoxLayout(docs_card)
+        dl.setContentsMargins(24, 20, 24, 20)
+        dl.setSpacing(8)
 
         docs_title = QLabel("Generated Content")
         docs_title.setObjectName("section_label")
-        docs_layout.addWidget(docs_title)
+        dl.addWidget(docs_title)
 
         if docs.get("summary"):
-            docs_layout.addWidget(self._label("Summary"))
-            summary_box = QTextEdit()
-            summary_box.setPlainText(docs["summary"])
-            summary_box.setReadOnly(True)
-            summary_box.setFixedHeight(80)
-            docs_layout.addWidget(summary_box)
+            dl.addWidget(self._label("Summary"))
+            sb = QTextEdit()
+            sb.setPlainText(docs["summary"])
+            sb.setReadOnly(True)
+            sb.setFixedHeight(80)
+            dl.addWidget(sb)
 
         if docs.get("cover_letter"):
-            docs_layout.addWidget(self._label("Cover Letter"))
-            cl_box = QTextEdit()
-            cl_box.setPlainText(docs["cover_letter"])
-            cl_box.setReadOnly(True)
-            cl_box.setFixedHeight(120)
-            docs_layout.addWidget(cl_box)
+            dl.addWidget(self._label("Cover Letter"))
+            cb = QTextEdit()
+            cb.setPlainText(docs["cover_letter"])
+            cb.setReadOnly(True)
+            cb.setFixedHeight(120)
+            dl.addWidget(cb)
 
         regen_row = QHBoxLayout()
         regen_btn = QPushButton("Regenerate with current selection")
@@ -664,14 +687,13 @@ class AnalyzeJobScreen(QWidget):
         regen_btn.clicked.connect(self._run_generate)
         regen_row.addWidget(regen_btn)
 
-        open_folder_btn = QPushButton("Open Output Folder")
-        open_folder_btn.setObjectName("secondary")
-        open_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        open_folder_btn.clicked.connect(self._open_output_folder)
-        regen_row.addWidget(open_folder_btn)
+        folder_btn = QPushButton("Open Output Folder")
+        folder_btn.setObjectName("secondary")
+        folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        folder_btn.clicked.connect(self._open_output_folder)
+        regen_row.addWidget(folder_btn)
 
-        docs_layout.addLayout(regen_row)
-
+        dl.addLayout(regen_row)
         self.right_layout.addWidget(docs_card)
 
     def _open_output_folder(self):
@@ -681,15 +703,12 @@ class AnalyzeJobScreen(QWidget):
         else:
             os.system(f"xdg-open '{output_dir}'")
 
-    # ── Save progress without generating docs ──
     def _save_progress(self):
         if not self.skills or not self.search_results:
             QMessageBox.warning(self, "Nothing to Save", "Run an analysis first.")
             return
-
         job_name = self.job_name_input.text().strip() or "Untitled Job"
         selected_ids = [cb.entry.get("id") for cb in self.entry_checkboxes if cb.is_checked()]
-
         self.analysis_id = save_progress(
             job_name=job_name,
             jd_text=self.jd_text,
@@ -698,28 +717,26 @@ class AnalyzeJobScreen(QWidget):
             ranked_entries=self.search_results["ranked"],
             selected_ids=selected_ids,
             analysis_id=self.analysis_id,
+            gap_suggestions=self.gap_suggestions,
         )
         QMessageBox.information(self, "Saved", "Progress saved to History.")
 
-    # ── Generate docs ──
     def _run_generate(self):
         selected = [cb.entry for cb in self.entry_checkboxes if cb.is_checked()]
-
         if not selected:
             QMessageBox.warning(self, "Nothing Selected", "Please select at least one entry.")
             return
-
         try:
             profile = Profile.load()
         except Exception as e:
             QMessageBox.critical(self, "Profile Error", str(e))
             return
-
         self.generate_btn.setEnabled(False)
         self.generate_btn.setText("Generating...")
         self.status_label.setText("Generating resume content...")
-
-        self.generate_worker = GenerateWorker(self.jd_text, profile, selected)
+        self.generate_worker = GenerateWorker(
+            self.jd_text, profile, selected, self.accepted_rewrites
+        )
         self.generate_worker.finished.connect(self._on_generate_done)
         self.generate_worker.error.connect(self._on_generate_error)
         self.generate_worker.status.connect(self.status_label.setText)
@@ -743,16 +760,17 @@ class AnalyzeJobScreen(QWidget):
 
         try:
             resume_path = build_resume(
-                profile, docs["summary"], docs["projects"], docs["experience"], f"{slug}_resume.docx",
+                profile, docs["summary"], docs["projects"],
+                docs["experience"], f"{slug}_resume.docx",
             )
-            cover_path = build_cover_letter(profile, docs["cover_letter"], f"{slug}_cover_letter.docx")
+            cover_path = build_cover_letter(
+                profile, docs["cover_letter"], f"{slug}_cover_letter.docx"
+            )
         except Exception as e:
             QMessageBox.critical(self, "Build Error", str(e))
             return
 
-        # Save progress + docs to history
         selected_ids = [cb.entry.get("id") for cb in self.entry_checkboxes if cb.is_checked()]
-
         self.analysis_id = save_progress(
             job_name=job_name,
             jd_text=self.jd_text,
@@ -761,6 +779,7 @@ class AnalyzeJobScreen(QWidget):
             ranked_entries=self.search_results["ranked"],
             selected_ids=selected_ids,
             analysis_id=self.analysis_id,
+            gap_suggestions=self.gap_suggestions,
         )
         save_docs(
             self.analysis_id,
@@ -770,15 +789,9 @@ class AnalyzeJobScreen(QWidget):
             cover_letter=docs["cover_letter"],
         )
 
-        # Re-render to show the docs section
         self._render_results(self.gap_analysis, self.search_results, selected_ids=selected_ids)
-
         self._open_output_folder()
-
-        QMessageBox.information(
-            self, "Done!",
-            f"Files saved to:\n\n{resume_path}\n{cover_path}"
-        )
+        QMessageBox.information(self, "Done!", f"Files saved to:\n\n{resume_path}\n{cover_path}")
 
     def _on_generate_error(self, error: str):
         self.generate_btn.setEnabled(True)
@@ -786,19 +799,15 @@ class AnalyzeJobScreen(QWidget):
         self.status_label.setText("")
         QMessageBox.critical(self, "Generation Failed", f"Something went wrong:\n\n{error}")
 
-    # ── Gap fix suggestions ──
     def _run_gap_check(self):
         selected = [cb.entry for cb in self.entry_checkboxes if cb.is_checked()]
         if not selected:
             QMessageBox.warning(self, "Nothing Selected", "Select at least one entry first.")
             return
-
-        skills_data = load_skills()
         self.check_gaps_btn.setEnabled(False)
         self.check_gaps_btn.setText("Checking...")
         self.status_label.setText("Analysing fillable gaps...")
-
-        self.gap_fix_worker = GapFixWorker(self.gap_analysis, selected, skills_data)
+        self.gap_fix_worker = GapFixWorker(self.gap_analysis, selected, load_skills())
         self.gap_fix_worker.finished.connect(self._on_gap_check_done)
         self.gap_fix_worker.error.connect(self._on_gap_check_error)
         self.gap_fix_worker.start()
@@ -807,29 +816,10 @@ class AnalyzeJobScreen(QWidget):
         self.check_gaps_btn.setEnabled(True)
         self.check_gaps_btn.setText("Check for Fillable Gaps")
         self.status_label.setText("")
-
-        # Clear previous suggestions
-        while self.gap_suggestions_container.count():
-            item = self.gap_suggestions_container.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        fillable = [s for s in suggestions if s.get("verdict") == "phrasing_gap"]
-
-        if not fillable:
-            none_label = QLabel("No fillable gaps found — remaining gaps appear to be genuine.")
-            none_label.setObjectName("subtitle")
-            none_label.setWordWrap(True)
-            self.gap_suggestions_container.addWidget(none_label)
-            return
-
-        for suggestion in fillable:
-            card = SuggestionCard(
-                suggestion=suggestion,
-                on_accept=self._accept_suggestion,
-                on_reject=self._reject_suggestion,
-            )
-            self.gap_suggestions_container.addWidget(card)
+        self.gap_suggestions = suggestions
+        if self.analysis_id:
+            save_suggestions(self.analysis_id, self.gap_suggestions)
+        self._render_suggestion_cards()
 
     def _on_gap_check_error(self, error: str):
         self.check_gaps_btn.setEnabled(True)
@@ -837,39 +827,71 @@ class AnalyzeJobScreen(QWidget):
         self.status_label.setText("")
         QMessageBox.critical(self, "Error", f"Could not check gaps:\n\n{error}")
 
+    def _render_suggestion_cards(self):
+        if self.gap_suggestions_container is None:
+            return
+        while self.gap_suggestions_container.count():
+            item = self.gap_suggestions_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        fillable = [s for s in self.gap_suggestions if s.get("verdict") == "phrasing_gap"]
+
+        if not fillable:
+            lbl = QLabel("No fillable gaps found — remaining gaps appear to be genuine.")
+            lbl.setObjectName("subtitle")
+            lbl.setWordWrap(True)
+            self.gap_suggestions_container.addWidget(lbl)
+            return
+
+        for suggestion in fillable:
+            card = SuggestionCard(
+                suggestion=suggestion,
+                on_accept=self._accept_suggestion,
+                on_decline=self._decline_suggestion,
+                on_status_change=self._on_suggestion_status_changed,
+            )
+            self.gap_suggestions_container.addWidget(card)
+
+    def _on_suggestion_status_changed(self):
+        self._render_suggestion_cards()
+        if self.analysis_id:
+            save_suggestions(self.analysis_id, self.gap_suggestions)
+
     def _accept_suggestion(self, suggestion: dict):
         fix_type = suggestion.get("fix_type")
-
         if fix_type == "add_skill" and suggestion.get("suggested_skill"):
-            add_skill("General", suggestion["suggested_skill"])
-            QMessageBox.information(
-                self, "Added",
-                f'Added "{suggestion["suggested_skill"]}" to your Skills under \'General\'. '
-                "You can move it to a better category in the Skills tab."
-            )
+            skill_name = suggestion["suggested_skill"]
+            category = suggestion.get("suggested_category") or "General"
+            skills_data = load_skills()
+            if category not in skills_data:
+                add_category(category)
+            add_skill(category, skill_name)
         elif fix_type == "reword_bullet":
-            target = suggestion.get("target_entry")
             original = suggestion.get("original_bullet")
-            new_bullet = suggestion.get("suggested_bullet")
-            if target and original and new_bullet:
-                success = update_bullet(target, original, new_bullet)
-                if success:
-                    QMessageBox.information(self, "Updated", f"Bullet updated in '{target}'.")
-                else:
-                    QMessageBox.warning(self, "Not Found", "Could not locate that bullet to update.")
+            reworded = suggestion.get("suggested_bullet")
+            if original and reworded:
+                self.accepted_rewrites[original] = reworded
 
-        QMessageBox.information(self, "Tip", "Re-run analysis to see the updated match score.")
+    def _decline_suggestion(self, suggestion: dict):
+        pass
 
-    def _reject_suggestion(self, suggestion: dict):
-        pass  # no-op, suggestion just stays dismissed visually until next render
-
-    # ── Load a saved record from History ──
     def load_record(self, record: dict):
         self.analysis_id = record["id"]
         self.jd_text = record["jd_text"]
         self.skills = record["skills"]
         self.gap_analysis = record["gap_analysis"]
         self.search_results = {"ranked": record["ranked_entries"]}
+        self.gap_suggestions = record.get("gap_suggestions", [])
+
+        self.accepted_rewrites = {
+            s["original_bullet"]: s["suggested_bullet"]
+            for s in self.gap_suggestions
+            if s.get("status") == "accepted"
+            and s.get("fix_type") == "reword_bullet"
+            and s.get("original_bullet")
+            and s.get("suggested_bullet")
+        }
 
         if record.get("status") == "docs_done":
             self.docs = {
@@ -883,8 +905,8 @@ class AnalyzeJobScreen(QWidget):
 
         self.job_name_input.setText(record["job_name"])
         self.jd_input.setPlainText(record["jd_text"])
-
         self.reextract_btn.show()
+
         self._render_results(
             self.gap_analysis,
             self.search_results,

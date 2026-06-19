@@ -1,23 +1,12 @@
-"""History persistence helpers for saved analyses and generated documents.
-
-This module writes and reads analysis records from disk so the UI can restore
-previous job applications and generated outputs.
-"""
-
 import json
 import os
 import uuid
 from datetime import datetime
 
-HISTORY_DIR = "./data/history"  # Local folder for saved analysis records.
+HISTORY_DIR = "./data/history"
 
 
 def _ensure_dir():
-    """Create the history directory if it does not already exist.
-
-    Returns:
-        None
-    """
     os.makedirs(HISTORY_DIR, exist_ok=True)
 
 
@@ -29,28 +18,11 @@ def save_progress(
     ranked_entries: list,
     selected_ids: list,
     analysis_id: str = None,
+    gap_suggestions: list = None,
 ) -> str:
-    """Save a history record after the search phase.
-
-    Args:
-        job_name: Display name for the application.
-        jd_text: Raw job description text.
-        skills: Extracted skill data.
-        gap_analysis: Skill gap analysis results.
-        ranked_entries: Ranked search results.
-        selected_ids: IDs of the entries selected for generation.
-        analysis_id: Optional record identifier to update in place.
-
-    Returns:
-        The saved analysis ID.
-
-    Side Effects:
-        Writes a JSON record to data/history.
-    """
     _ensure_dir()
     analysis_id = analysis_id or str(uuid.uuid4())[:8]
 
-    # Keep previously generated documents when a record is refreshed.
     existing = {}
     path = os.path.join(HISTORY_DIR, f"{analysis_id}.json")
     if os.path.exists(path):
@@ -72,6 +44,11 @@ def save_progress(
         "projects": existing.get("projects", ""),
         "experience": existing.get("experience", ""),
         "cover_letter": existing.get("cover_letter", ""),
+        # preserve suggestions if not explicitly passing new ones
+        "gap_suggestions": (
+            gap_suggestions if gap_suggestions is not None
+            else existing.get("gap_suggestions", [])
+        ),
     }
 
     if existing.get("status") == "docs_done":
@@ -82,22 +59,13 @@ def save_progress(
     return analysis_id
 
 
-def save_docs(analysis_id: str, summary: str, projects: str, experience: str, cover_letter: str) -> None:
-    """Attach generated documents to an existing history record.
-
-    Args:
-        analysis_id: The record to update.
-        summary: Generated summary text.
-        projects: Generated projects section.
-        experience: Generated experience section.
-        cover_letter: Generated cover letter text.
-
-    Returns:
-        None
-
-    Side Effects:
-        Updates the corresponding JSON record on disk.
-    """
+def save_docs(
+    analysis_id: str,
+    summary: str,
+    projects: str,
+    experience: str,
+    cover_letter: str,
+) -> None:
     path = os.path.join(HISTORY_DIR, f"{analysis_id}.json")
     with open(path) as f:
         record = json.load(f)
@@ -113,12 +81,20 @@ def save_docs(analysis_id: str, summary: str, projects: str, experience: str, co
         json.dump(record, f, indent=2)
 
 
-def load_all() -> list[dict]:
-    """Load all history records in reverse chronological filename order.
+def save_suggestions(analysis_id: str, suggestions: list) -> None:
+    """Persist gap suggestions (with per-suggestion status) to a record."""
+    path = os.path.join(HISTORY_DIR, f"{analysis_id}.json")
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        record = json.load(f)
+    record["gap_suggestions"] = suggestions
+    record["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(path, "w") as f:
+        json.dump(record, f, indent=2)
 
-    Returns:
-        A list of saved analysis records.
-    """
+
+def load_all() -> list[dict]:
     _ensure_dir()
     records = []
     for fname in sorted(os.listdir(HISTORY_DIR), reverse=True):
@@ -129,28 +105,12 @@ def load_all() -> list[dict]:
 
 
 def load_one(analysis_id: str) -> dict:
-    """Load a single history record by ID.
-
-    Args:
-        analysis_id: The record identifier to load.
-
-    Returns:
-        The parsed history record.
-    """
     path = os.path.join(HISTORY_DIR, f"{analysis_id}.json")
     with open(path) as f:
         return json.load(f)
 
 
 def delete_analysis(analysis_id: str) -> None:
-    """Delete a saved history record by ID.
-
-    Args:
-        analysis_id: The record identifier to remove.
-
-    Returns:
-        None
-    """
     path = os.path.join(HISTORY_DIR, f"{analysis_id}.json")
     if os.path.exists(path):
         os.remove(path)
